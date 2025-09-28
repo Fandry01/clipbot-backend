@@ -1,0 +1,1 @@
+-- Intentionally empty; schema is current Hibernate-generated baseline
