@@ -46,8 +46,9 @@ public class Media {
         this.source = source;
         this.createdAt = createdAt;
     }
+    public Media(){}
 
-    public Media() {
+    public Media(String objectKey,Account owner ) {
     }
 
     public UUID getId() {
@@ -96,5 +97,13 @@ public class Media {
 
     public void setCreatedAt(LocalDate createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public MediaStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(MediaStatus status) {
+        this.status = status;
     }
 }

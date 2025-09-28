@@ -40,3 +40,4 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     int markError(UUID id, String errorJson);
 }
 
+
