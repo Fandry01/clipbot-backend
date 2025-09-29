@@ -84,7 +84,7 @@ public class UploadService {
 
         // 4) Create Media
 
-        var media = new Media(objectKey, owner);
+        var media = new Media(owner, objectKey);
         media.setSource(sourceLabel != null ? sourceLabel : "upload");
         media.setStatus(MediaStatus.UPLOADED);
         mediarepo.save(media);

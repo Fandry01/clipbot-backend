@@ -48,7 +48,9 @@ public class Media {
     }
     public Media(){}
 
-    public Media(String objectKey,Account owner ) {
+    public Media(Account owner, String objectKey ) {
+        this.owner = owner;
+        this.objectKey = objectKey;
     }
 
     public UUID getId() {

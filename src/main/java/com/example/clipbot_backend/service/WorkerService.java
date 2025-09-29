@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.engine.*;
 import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Job;
@@ -14,11 +15,13 @@ import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
 import javax.swing.*;
 import java.util.Map;
 import java.util.UUID;
 
+@Service
 public class WorkerService {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerService.class);
 
@@ -30,13 +33,13 @@ public class WorkerService {
     private final AssetRepository assetRepo;
 
     // engines
-    private final TranscriptionEngine transcription;
+    private final ITranscriptionEngine transcription;
     private final DetectionEngine detection;
     private final ClipRenderEngine renderEngine;
     private final IStorageService storage;
     private final SubtitleService subtitles;
 
-    public WorkerService(JobService jobService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, IStorageService storage, SubtitleService subtitles) {
+    public WorkerService(JobService jobService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, ITranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, IStorageService storage, SubtitleService subtitles) {
         this.jobService = jobService;
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
@@ -103,7 +106,7 @@ public class WorkerService {
     }
 
     private void handleClip(Job job) throws Exception {
-        // verwacht payload: clipId
+         //verwacht payload: clipId
         var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
         var clip = clipRepo.findById(clipId).orElseThrow();
         var media = clip.getMedia();
@@ -136,7 +139,6 @@ public class WorkerService {
         clipRepo.save(clip);
 
         jobService.markDone(job.getId(), Map.of("mp4Key", res.mp4Key()));
-
 
     }
 

@@ -23,7 +23,7 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
         FOR UPDATE SKIP LOCKED
         LIMIT 1
         """, nativeQuery = true)
-    Optional<Job> selectOneQueuedIdForUpdate();
+    Optional<UUID> selectOneQueuedIdForUpdate();
 
     // 2) Markeer RUNNING
     @Modifying
