@@ -68,6 +68,7 @@ public class Job {
 
     // getters/setters ...
 
+    public UUID getId() { return id; }
     public Media getMedia() {
         return media;
     }

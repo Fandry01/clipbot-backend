@@ -14,6 +14,7 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     long countByStatus(JobStatus status);
 
     // -------- Safe pick pattern (Postgres) ----------
+
     // 1) Selecteer 1 job met SKIP LOCKED
     @Query(value = """
         SELECT id FROM job
@@ -22,7 +23,7 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
         FOR UPDATE SKIP LOCKED
         LIMIT 1
         """, nativeQuery = true)
-    Optional<UUID> selectOneQueuedIdForUpdate();
+    Optional<Job> selectOneQueuedIdForUpdate();
 
     // 2) Markeer RUNNING
     @Modifying

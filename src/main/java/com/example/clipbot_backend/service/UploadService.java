@@ -25,14 +25,14 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Service
-public class uploadService {
+public class UploadService {
     private final IStorageService storageService;
     private final AccountRepository accountRepo;
     private final MediaRepository mediarepo;
     private final AssetRepository assetRepo;
     private final JobRepository jobRepo;
 
-    public uploadService(IStorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo) {
+    public UploadService(IStorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo) {
         this.storageService = storageService;
         this.accountRepo = accountRepo;
         this.mediarepo = mediarepo;
@@ -82,13 +82,14 @@ public class uploadService {
         var asset = new Asset(owner, AssetKind.MEDIA_RAW, objectKey, sizeBytes);
         assetRepo.save(asset);
 
-        // 5) Create Media
+        // 4) Create Media
 
         var media = new Media(objectKey, owner);
         media.setSource(sourceLabel != null ? sourceLabel : "upload");
         media.setStatus(MediaStatus.UPLOADED);
         mediarepo.save(media);
 
+        // 5) Enqueue TRANSCRIBE job
         var job = new Job(JobType.TRANSCRIBE);
         job.setMedia(media);
         job.setStatus(JobStatus.QUEUED);
