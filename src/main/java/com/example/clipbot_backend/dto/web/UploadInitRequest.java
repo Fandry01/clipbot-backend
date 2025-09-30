@@ -1,4 +1,4 @@
-package com.example.clipbot_backend.dto;
+package com.example.clipbot_backend.dto.web;
 
 public record UploadInitRequest(
         String ownerExternalSubject,

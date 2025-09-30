@@ -1,7 +1,10 @@
 package com.example.clipbot_backend.service;
 
-import com.example.clipbot_backend.dto.DetectionParams;
-import com.example.clipbot_backend.engine.*;
+import com.example.clipbot_backend.dto.RenderOptions;
+import com.example.clipbot_backend.dto.web.DetectionParams;
+import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
+import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
+import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Job;
 import com.example.clipbot_backend.model.Segment;
@@ -17,7 +20,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import javax.swing.*;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,13 +35,13 @@ public class WorkerService {
     private final AssetRepository assetRepo;
 
     // engines
-    private final ITranscriptionEngine transcription;
+    private final TranscriptionEngine transcription;
     private final DetectionEngine detection;
     private final ClipRenderEngine renderEngine;
-    private final IStorageService storage;
+    private final StorageService storage;
     private final SubtitleService subtitles;
 
-    public WorkerService(JobService jobService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, ITranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, IStorageService storage, SubtitleService subtitles) {
+    public WorkerService(JobService jobService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
         this.jobService = jobService;
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;

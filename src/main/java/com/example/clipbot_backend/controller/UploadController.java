@@ -1,14 +1,12 @@
 package com.example.clipbot_backend.controller;
 
-import com.example.clipbot_backend.dto.UploadCompleteResponse;
-import com.example.clipbot_backend.dto.UploadInitRequest;
-import com.example.clipbot_backend.dto.UploadInitResponse;
+import com.example.clipbot_backend.dto.web.UploadCompleteResponse;
+import com.example.clipbot_backend.dto.web.UploadInitRequest;
+import com.example.clipbot_backend.dto.web.UploadInitResponse;
 import com.example.clipbot_backend.service.UploadService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
 
 @RestController
 @RequestMapping("/v1/uploads")

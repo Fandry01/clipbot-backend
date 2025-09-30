@@ -3,7 +3,7 @@ package com.example.clipbot_backend.service;
 import com.example.clipbot_backend.exception.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
+
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -12,7 +12,7 @@ import java.nio.file.*;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 
-public class LocalStorageService implements IStorageService{
+public class LocalStorageService implements StorageService {
     private static final Logger LOGGER = LoggerFactory.getLogger(LocalStorageService.class);
 
     private final Path baseDir;

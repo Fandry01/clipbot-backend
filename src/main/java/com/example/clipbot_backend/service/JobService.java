@@ -16,14 +16,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Service
-public class JobService implements IJobService {
+public class JobService{
     private final JobRepository jobRepo;
 
     public JobService(JobRepository jobRepo) {
         this.jobRepo = jobRepo;
     }
 
-    @Override
+
     @Transactional
     public UUID enqueue(UUID mediaID, JobType type, Map<String, Object> payload) {
         var j = new Job(type);
@@ -40,7 +40,6 @@ public class JobService implements IJobService {
         return j.getId();
     }
 
-    @Override
     @Transactional
     public Optional<Job> pickOneQueued() {
         return jobRepo.selectOneQueuedIdForUpdate()
@@ -52,13 +51,12 @@ public class JobService implements IJobService {
                 });
     }
 
-    @Override
+
     @Transactional
     public void markDone(UUID id, Map<String, Object> result){
         jobRepo.markDone(id,result == null ? "{}" : JsonMapper.builder().build().valueToTree(result).toString());
     }
 
-    @Override
     @Transactional
     public void markError(UUID id, String message, Map<String, Object> details){
         var payload = details == null ? new HashMap<String, Object>() : new HashMap<>(details);

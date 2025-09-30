@@ -1,7 +1,7 @@
 package com.example.clipbot_backend.config;
 
-import com.example.clipbot_backend.service.IStorageService;
 import com.example.clipbot_backend.service.LocalStorageService;
+import com.example.clipbot_backend.service.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,7 +12,7 @@ import java.nio.file.Path;
 public class StorageConfig {
 
     @Bean
-    public IStorageService storageService(
+    public StorageService storageService(
             @Value("${storage.type:local}") String type,
             @Value("{storage.local.baseDir:./data}") String baseDir,
             @Value("${storage.local.rawPrefix:raw}") String rawPrefix,

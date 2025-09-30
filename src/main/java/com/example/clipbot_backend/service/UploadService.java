@@ -1,8 +1,8 @@
 package com.example.clipbot_backend.service;
 
-import com.example.clipbot_backend.dto.UploadCompleteResponse;
-import com.example.clipbot_backend.dto.UploadInitRequest;
-import com.example.clipbot_backend.dto.UploadInitResponse;
+import com.example.clipbot_backend.dto.web.UploadCompleteResponse;
+import com.example.clipbot_backend.dto.web.UploadInitRequest;
+import com.example.clipbot_backend.dto.web.UploadInitResponse;
 import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Job;
@@ -26,13 +26,13 @@ import java.util.UUID;
 
 @Service
 public class UploadService {
-    private final IStorageService storageService;
+    private final StorageService storageService;
     private final AccountRepository accountRepo;
     private final MediaRepository mediarepo;
     private final AssetRepository assetRepo;
     private final JobRepository jobRepo;
 
-    public UploadService(IStorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo) {
+    public UploadService(StorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo) {
         this.storageService = storageService;
         this.accountRepo = accountRepo;
         this.mediarepo = mediarepo;
