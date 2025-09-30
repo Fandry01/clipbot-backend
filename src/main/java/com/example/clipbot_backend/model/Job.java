@@ -32,10 +32,12 @@ public class Job {
     @JoinColumn(name = "media_id",
             foreignKey = @ForeignKey(name = "fk_job_media"))
     private Media media;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, length = 32)
     private JobType type;
 
+    @Enumerated(EnumType.STRING)
     private JobStatus status;
 
     @JdbcTypeCode(SqlTypes.JSON)

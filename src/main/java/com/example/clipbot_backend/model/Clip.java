@@ -41,6 +41,7 @@ public class Clip {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32)
     private ClipStatus status;
+
     @Column(name = "title", length = 255)
     private String title;
     @Column(name = "caption_srt_key", length = 1024)
