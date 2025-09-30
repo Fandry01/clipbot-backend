@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.RenderOptions;
+import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.dto.web.DetectionParams;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
@@ -117,7 +118,7 @@ public class WorkerService {
         // subtitles (optioneel)
 
         var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElseThrow(null);
-        subtitles subs = null;
+        SubtitleFiles subs = null;
         if(tr != null){
             subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
         }
@@ -130,8 +131,8 @@ public class WorkerService {
         if(res.thumbKey() != null) assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
 
         if(subs != null){
-            if(subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT, subs.srtSize()));
-            if(subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttSize()));
+            if(subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT,subs.srtKey(), subs.srtSize()));
+            if(subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize()));
         }
 
         // update clip
