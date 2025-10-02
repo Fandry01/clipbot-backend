@@ -1,6 +1,6 @@
 package com.example.clipbot_backend.controller;
 
-import com.example.clipbot_backend.dto.TranscriptResponse;
+import com.example.clipbot_backend.dto.web.TranscriptResponse;
 import com.example.clipbot_backend.dto.web.TranscriptUpsertRequest;
 import com.example.clipbot_backend.dto.web.TranscriptUpsertResponse;
 import com.example.clipbot_backend.service.TranscriptService;
