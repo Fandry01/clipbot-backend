@@ -6,10 +6,7 @@ import com.example.clipbot_backend.dto.web.DetectionParams;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
-import com.example.clipbot_backend.model.Asset;
-import com.example.clipbot_backend.model.Job;
-import com.example.clipbot_backend.model.Segment;
-import com.example.clipbot_backend.model.Transcript;
+import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
@@ -29,6 +26,7 @@ public class WorkerService {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerService.class);
 
     private final JobService jobService;
+    private final TranscriptService transcriptService;
     private final MediaRepository mediaRepo;
     private final TranscriptRepository transcriptRepo;
     private final SegmentRepository segmentRepo;
@@ -36,20 +34,22 @@ public class WorkerService {
     private final AssetRepository assetRepo;
 
     // engines
-    private final TranscriptionEngine transcription;
+    private final TranscriptionEngine transcriptionEngine;
     private final DetectionEngine detection;
     private final ClipRenderEngine renderEngine;
     private final StorageService storage;
     private final SubtitleService subtitles;
 
-    public WorkerService(JobService jobService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
+
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
         this.jobService = jobService;
+        this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
         this.clipRepo = clipRepo;
         this.assetRepo = assetRepo;
-        this.transcription = transcription;
+        this.transcriptionEngine = transcription;
         this.detection = detection;
         this.renderEngine = renderEngine;
         this.storage = storage;
@@ -75,22 +75,37 @@ public class WorkerService {
     }
 
     private void handleTranscribe(Job job) throws Exception {
-        var media = mediaRepo.findById(job.getMedia().getId()).orElseThrow();
-        var srcPath = storage.resolveRaw(media.getObjectKey());
-        var tr = transcription.transcribe(srcPath, null);
-        // upsert tanscript
-        var t = transcriptRepo.findByMediaAndLangAndProvider(media, tr.lang(), tr.provider())
-                .orElseGet(() -> new Transcript(media, tr.lang(), tr.provider()));
-        t.setText(tr.text());
-        t.setWords(tr.words());
-        transcriptRepo.save(t);
-        media.setStatus(MediaStatus.PROCESSING);
-        mediaRepo.save(media);
+        UUID mediaId = (job.getMedia() != null ? job.getMedia().getId() : null);
+        Media media = mediaRepo.findById(mediaId).orElseThrow();
 
-        // chain detect job
+        try{
+            // 1) Transcribe via nieuwe interface (engine resolve't zelf raw via object
+            var request = new TranscriptionEngine.Request(
+                    media.getId(),
+                    media.getObjectKey(),
+                    null
+            );
+            var res = transcriptionEngine.transcribe(request);
+            // 2) Upsert Transcript (tekst + words JSON) via service
+            transcriptService.upsert(media.getId(), res);
 
-        jobService.markDone(job.getId(), Map.of("transcriptLang", tr.lang()));
-        jobService.enqueue(media.getId(), JobType.DETECT, Map.of());
+            // 3) Media-status bijwerken (kies wat je hebt: TRANSCRIBED/PROCESSING/READY_FOR_DETECT)
+            media.setStatus(MediaStatus.PROCESSING);
+            mediaRepo.save(media);
+
+            // 4) Job afronden + detect enqueuen
+            jobService.markDone(job.getId(), Map.of(
+                    "transcriptLang", res.lang(),
+                    "provider", res.provider()
+            ));
+            jobService.enqueue(media.getId(), JobType.DETECT, Map.of());
+
+        } catch (Exception e) {
+            // Belangrijk: markeer job als error zodat retry-logica/observability werkt
+            jobService.markError(job.getId(), e.getMessage(), Map.of());
+            // (optioneel) log stacktrace
+            throw new RuntimeException("TRANSCRIBE failed for media " + mediaId, e);
+        }
     }
 
     private void handleDetect(Job job) throws Exception {

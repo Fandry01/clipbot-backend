@@ -14,5 +14,10 @@ public class DummyTranscriptionEngine implements TranscriptionEngine {
         return new TranscriptionResult("en", "whisper",
                 "Hello world transcript ...", Map.of("words", java.util.List.of()));
     }
+
+    @Override
+    public Result transcribe(Request req) throws Exception {
+        return null;
+    }
 }
 

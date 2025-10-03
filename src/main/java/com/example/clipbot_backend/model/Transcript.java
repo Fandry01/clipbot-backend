@@ -35,7 +35,12 @@ public class Transcript {
     @Column(name = "version", nullable = false)
     private long version;
 
+
     private Instant createdAt;
+
+    @PrePersist
+    void onCreate() { this.createdAt = Instant.now(); }
+
 
     protected Transcript() {}
 
