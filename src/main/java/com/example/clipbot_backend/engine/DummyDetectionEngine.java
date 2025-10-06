@@ -1,6 +1,6 @@
 package com.example.clipbot_backend.engine;
 
-import com.example.clipbot_backend.dto.web.DetectionParams;
+import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Transcript;

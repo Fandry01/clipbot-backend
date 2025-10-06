@@ -2,7 +2,7 @@ package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.RenderOptions;
 import com.example.clipbot_backend.dto.SubtitleFiles;
-import com.example.clipbot_backend.dto.web.DetectionParams;
+import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
