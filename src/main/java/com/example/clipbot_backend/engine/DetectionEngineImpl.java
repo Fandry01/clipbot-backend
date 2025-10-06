@@ -1,6 +1,10 @@
 package com.example.clipbot_backend.engine;
 
-import com.example.clipbot_backend.dto.*;
+import com.example.clipbot_backend.dto.DetectionParams;
+import com.example.clipbot_backend.dto.SegmentDTO;
+import com.example.clipbot_backend.dto.SentenceSpan;
+import com.example.clipbot_backend.dto.SilenceEvent;
+import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.service.ClipAssembler;
@@ -19,12 +23,12 @@ public class DetectionEngineImpl implements DetectionEngine {
     private final SilenceDetector silenceDetector;
     private final ClipAssembler assembler = new ClipAssembler();
 
-    public DetectionEngine(SilenceDetector silenceDetector){
+    public DetectionEngineImpl(SilenceDetector silenceDetector) {
         this.silenceDetector = silenceDetector;
     }
 
     @Override
-    List<SegmentDTO> detect (Path mediaFile, Transcript transcript, DetectionParams params){
+    public List<SegmentDTO> detect(Path mediaFile, Transcript transcript, DetectionParams params) {
         //1) woorden uit jouw JSON
         List<WordsParser.WordAdapter> words = WordsParser.extract(transcript);
 
@@ -50,11 +54,11 @@ public class DetectionEngineImpl implements DetectionEngine {
 
         // 5) map naar SegmentDTO (bigDecimal score + meta met componenten)
 
-        return wins.stream().map(w ->{
+        return wins.stream().map(w -> {
                     Map<String, Object> meta = new LinkedHashMap<>();
                     meta.putAll(w.scoreComponents); // overal, lenscore, hasHook, hasPayoff,boundaryBonus
                     meta.put("startIdx", w.startIdx);
-                    meta.put("endidx", w.endIdx);
+                    meta.put("endIdx", w.endIdx);
                     meta.put("snapped", true);
                     meta.put("snapThresholdMs", params.snapThresholdMs());
                     meta.put("minDurationMs", params.minDurationMs());

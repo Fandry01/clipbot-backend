@@ -132,12 +132,22 @@ public class WorkerService {
         var tr = trOpt.get();
         var srcPath = storage.resolveRaw(media.getObjectKey());
         var params = DetectionParams.defaults().withMaxCandidates(8);
-        Double sceneTh = (double) job.getPayload().get("sceneThreshold");
-        if(sceneTh != null) {
+        Object sceneThresholdValue = job.getPayload().get("sceneThreshold");
+        Double sceneTh = null;
+        if (sceneThresholdValue instanceof Number number) {
+            sceneTh = number.doubleValue();
+        } else if (sceneThresholdValue != null) {
+            try {
+                sceneTh = Double.parseDouble(sceneThresholdValue.toString());
+            } catch (NumberFormatException ignored) {
+                LOGGER.warn("Invalid sceneThreshold payload value: {}", sceneThresholdValue);
+            }
+        }
+        if (sceneTh != null && sceneTh > 0) {
             params = new DetectionParams(
                     params.minDurationMs(), params.maxDurationMs(), params.maxCandidates(),
                     params.silenceNoiseDb(), params.silenceMinDurSec(), params.snapThresholdMs(),
-                    params.targetLenSec(), params.lenSigmaSec(),sceneTh, params.snapSceneMs(), params.sceneAlignBonus()
+                    params.targetLenSec(), params.lenSigmaSec(), sceneTh, params.snapSceneMs(), params.sceneAlignBonus()
             );
         }
         long T0 = System.nanoTime();
@@ -170,9 +180,9 @@ public class WorkerService {
 
         // subtitles (optioneel)
 
-        var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElseThrow(null);
+        var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElse(null);
         SubtitleFiles subs = null;
-        if(tr != null){
+        if (tr != null) {
             subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
         }
 
@@ -189,8 +199,8 @@ public class WorkerService {
         }
 
         // update clip
-        clip.setCaptionSrtKey(subs != null ? subs.srtKey(): null);
-        clip.setCaptionVttKey(subs != null ? subs.vttKey(): null);
+        clip.setCaptionSrtKey(subs != null ? subs.srtKey() : null);
+        clip.setCaptionVttKey(subs != null ? subs.vttKey() : null);
         clip.setStatus(ClipStatus.READY);
         clipRepo.save(clip);
 
