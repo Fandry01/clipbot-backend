@@ -43,7 +43,7 @@ public class ClipAssembler {
                 if (eSnap>=0) e = eSnap;
 
                 var comp = scorer.scoreWindow(sentences.subList(i, j+1), targetLenSec, sigmaSec);
-                out.add(new Window(i,j,s,e,comp.overall, comp.toMeta()));
+                out.add(new Window(i,j,s,e,comp.overall(), comp.toMeta()));
             }
         }
 

@@ -1,6 +1,5 @@
 package com.example.clipbot_backend.engine;
 
-import com.example.clipbot_backend.dto.web.TranscriptionResult;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,10 +41,6 @@ public class WhisperLocalTranscriptionEngine implements TranscriptionEngine {
         }
     }
 
-    @Override
-    public TranscriptionResult transcribe(Path mediaFile, String langHint) throws Exception {
-        return null;
-    }
 
     @Override
     public Result transcribe(Request request) throws Exception {

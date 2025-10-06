@@ -40,6 +40,6 @@ public class HeuristicScorer {
 
     private boolean containsAny(String t, Set<String> keys){ for (var k:keys) if (t.contains(k)) return true; return false; }
     private double gaussian(double x,double mu,double sigma){ double d=(x-mu)/sigma; return Math.exp(-0.5*d*d); }
-    private double clamp(double v,double a,double b){ return Math.max(a, Math.min(b,v)); }
+    private double clamp(double v,double a, double b){ return Math.max(a, Math.min(b,v)); }
 }
 
