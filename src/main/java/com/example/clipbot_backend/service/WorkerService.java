@@ -171,41 +171,42 @@ public class WorkerService {
     }
 
     @Transactional
-  void handleClip(Job job) throws Exception {
-         //verwacht payload: clipId
-        var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
-        var clip = clipRepo.findById(clipId).orElseThrow();
-        var media = clip.getMedia();
-        var srcPath = storage.resolveRaw(media.getObjectKey());
+      void handleClip(Job job) throws Exception {
+             //verwacht payload: clipId
+            var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
+            var clip = clipRepo.findById(clipId).orElseThrow();
+            var media = clip.getMedia();
+            var srcPath = storage.resolveRaw(media.getObjectKey());
 
-        // subtitles (optioneel)
+            // subtitles (optioneel)
 
-        var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElse(null);
-        SubtitleFiles subs = null;
-        if (tr != null) {
-            subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
-        }
+            var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElse(null);
+            SubtitleFiles subs = null;
+            if (tr != null) {
+                subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
+            }
 
-        var res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), new RenderOptions(clip.getMeta(), subs));
+            RenderOptions options = RenderOptions.withDefaults(clip.getMeta(), subs);
+            var res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
 
-        // Registreer Assets
-        var owner = media.getOwner();
-        assetRepo.save(new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size()));
-        if(res.thumbKey() != null) assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
+            // Registreer Assets
+            var owner = media.getOwner();
+            assetRepo.save(new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size()));
+            if(res.thumbKey() != null) assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
 
-        if(subs != null){
-            if(subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT,subs.srtKey(), subs.srtSize()));
-            if(subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize()));
-        }
+            if(subs != null){
+                if(subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT,subs.srtKey(), subs.srtSize()));
+                if(subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize()));
+            }
 
-        // update clip
-        clip.setCaptionSrtKey(subs != null ? subs.srtKey() : null);
-        clip.setCaptionVttKey(subs != null ? subs.vttKey() : null);
-        clip.setStatus(ClipStatus.READY);
-        clipRepo.save(clip);
+            // update clip
+            clip.setCaptionSrtKey(subs != null ? subs.srtKey() : null);
+            clip.setCaptionVttKey(subs != null ? subs.vttKey() : null);
+            clip.setStatus(ClipStatus.READY);
+            clipRepo.save(clip);
 
-        jobService.markDone(job.getId(), Map.of("mp4Key", res.mp4Key()));
-        LOGGER.info("CLIP {} ready (mp4Key={})", clipId, res.mp4Key());
+            jobService.markDone(job.getId(), Map.of("mp4Key", res.mp4Key()));
+            LOGGER.info("CLIP {} ready (mp4Key={})", clipId, res.mp4Key());
 
     }
 
