@@ -1,8 +1,7 @@
 package com.example.clipbot_backend.config;
 
 import com.example.clipbot_backend.service.LocalStorageService;
-import com.example.clipbot_backend.service.StorageService;
-import org.springframework.beans.factory.annotation.Value;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

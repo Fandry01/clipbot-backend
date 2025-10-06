@@ -6,7 +6,7 @@ import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 
-import com.example.clipbot_backend.service.StorageService;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -1,4 +1,4 @@
-package com.example.clipbot_backend.service;
+package com.example.clipbot_backend.service.Interfaces;
 
 import com.example.clipbot_backend.dto.SilenceEvent;
 

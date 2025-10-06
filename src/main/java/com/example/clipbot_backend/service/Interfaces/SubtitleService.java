@@ -1,8 +1,7 @@
-package com.example.clipbot_backend.service;
+package com.example.clipbot_backend.service.Interfaces;
 
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.model.Transcript;
-import org.springframework.stereotype.Service;
 
 
 public interface SubtitleService {

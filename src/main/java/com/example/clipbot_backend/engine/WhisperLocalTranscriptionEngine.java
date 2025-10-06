@@ -2,7 +2,7 @@ package com.example.clipbot_backend.engine;
 
 import com.example.clipbot_backend.dto.web.TranscriptionResult;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
-import com.example.clipbot_backend.service.StorageService;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

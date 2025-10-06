@@ -2,7 +2,7 @@ package com.example.clipbot_backend.config;
 
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.engine.WhisperLocalTranscriptionEngine;
-import com.example.clipbot_backend.service.StorageService;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;

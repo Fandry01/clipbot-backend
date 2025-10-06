@@ -1,7 +1,7 @@
 package com.example.clipbot_backend.engine;
 
 import com.example.clipbot_backend.dto.SilenceEvent;
-import com.example.clipbot_backend.service.SilenceDetector;
+import com.example.clipbot_backend.service.Interfaces.SilenceDetector;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;

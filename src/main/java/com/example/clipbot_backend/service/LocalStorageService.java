@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.exception.StorageException;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -8,6 +8,8 @@ import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.*;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
+import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
@@ -18,7 +20,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -57,7 +61,6 @@ public class WorkerService {
     }
 
     @Scheduled(fixedDelayString = "3000")
-    @Transactional
     public void poll() {
         jobService.pickOneQueued().ifPresent(job -> {
             try {
@@ -74,11 +77,12 @@ public class WorkerService {
         });
     }
 
-    private void handleTranscribe(Job job) throws Exception {
+@Transactional
+     void handleTranscribe(Job job) throws Exception {
         UUID mediaId = (job.getMedia() != null ? job.getMedia().getId() : null);
         Media media = mediaRepo.findById(mediaId).orElseThrow();
 
-        try{
+            long t0 = System.nanoTime();
             // 1) Transcribe via nieuwe interface (engine resolve't zelf raw via object
             var request = new TranscriptionEngine.Request(
                     media.getId(),
@@ -98,32 +102,66 @@ public class WorkerService {
                     "transcriptLang", res.lang(),
                     "provider", res.provider()
             ));
-            jobService.enqueue(media.getId(), JobType.DETECT, Map.of());
+            jobService.enqueue(media.getId(), JobType.DETECT, Map.of(
+                    "lang", res.lang(),
+                    "provider", res.provider()
+            ));
 
-        } catch (Exception e) {
-            // Belangrijk: markeer job als error zodat retry-logica/observability werkt
-            jobService.markError(job.getId(), e.getMessage(), Map.of());
-            // (optioneel) log stacktrace
-            throw new RuntimeException("TRANSCRIBE failed for media " + mediaId, e);
-        }
+          LOGGER.info("TRANSCRIBE {} done in {} ms (lang={}, provider={})",
+        mediaId, (System.nanoTime()-t0)/1_000_000, res.lang(), res.provider());
     }
 
-    private void handleDetect(Job job) throws Exception {
+    @Transactional
+    void handleDetect(Job job) throws Exception {
         var media = mediaRepo.findById(job.getMedia().getId()).orElseThrow();
-        var trOpt = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper");
-        var srcPath = storage.resolveRaw(media.getObjectKey());
-        var segments = detection.detect(srcPath, trOpt.orElse(null), new DetectionParams());
-        // save batch
-        for(var s : segments){
-            var seg = new Segment(media, s.startMs(), s.endMs());
-            seg.setScore(s.score());
-            seg.setMeta(s.meta());
-            segmentRepo.save(seg);
+        //1) Transcript kiezen payload > latest by createdAt
+        String lang = (String) job.getPayload().getOrDefault("lang", null);
+        String provider = (String) job.getPayload().getOrDefault("provider", null);
+        Optional<Transcript> trOpt;
+        if(lang != null && provider != null) {
+            trOpt = transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider);
+        } else {
+            trOpt = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
         }
+        if (trOpt.isEmpty()) {
+            LOGGER.warn("No transcript for media {}. Enqueue TRANSCRIBE and skip DETECT.", media.getId());
+            jobService.markError(job.getId(), "No transcript", Map.of());
+            jobService.enqueue(media.getId(), JobType.TRANSCRIBE, Map.of());
+            return;
+        }
+        var tr = trOpt.get();
+        var srcPath = storage.resolveRaw(media.getObjectKey());
+        var params = DetectionParams.defaults().withMaxCandidates(8);
+        Double sceneTh = (double) job.getPayload().get("sceneThreshold");
+        if(sceneTh != null) {
+            params = new DetectionParams(
+                    params.minDurationMs(), params.maxDurationMs(), params.maxCandidates(),
+                    params.silenceNoiseDb(), params.silenceMinDurSec(), params.snapThresholdMs(),
+                    params.targetLenSec(), params.lenSigmaSec(),sceneTh, params.snapSceneMs(), params.sceneAlignBonus()
+            );
+        }
+        long T0 = System.nanoTime();
+        var segments = detection.detect(srcPath, tr, params);
+        // 4) Idempotent wegschrijven
+        segmentRepo.deleteByMedia(media);
+        if(!segments.isEmpty()) {
+            var toSave = new ArrayList<Segment>(segments.size());
+            // save batch
+            for(var s : segments){
+                var seg = new Segment(media, s.startMs(), s.endMs());
+                seg.setScore(s.score());
+                seg.setMeta(s.meta());
+                toSave.add(seg);
+            }
+            segmentRepo.saveAll(toSave);
+        }
+
+
         jobService.markDone(job.getId(), Map.of("segmentCount", segments.size()));
     }
 
-    private void handleClip(Job job) throws Exception {
+    @Transactional
+  void handleClip(Job job) throws Exception {
          //verwacht payload: clipId
         var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
         var clip = clipRepo.findById(clipId).orElseThrow();
@@ -157,6 +195,7 @@ public class WorkerService {
         clipRepo.save(clip);
 
         jobService.markDone(job.getId(), Map.of("mp4Key", res.mp4Key()));
+        LOGGER.info("CLIP {} ready (mp4Key={})", clipId, res.mp4Key());
 
     }
 

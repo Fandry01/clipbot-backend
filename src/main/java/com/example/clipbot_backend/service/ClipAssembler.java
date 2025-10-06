@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.SentenceSpan;
+import com.example.clipbot_backend.dto.SilenceEvent;
 import com.example.clipbot_backend.util.HeuristicScorer;
 
 import java.util.*;

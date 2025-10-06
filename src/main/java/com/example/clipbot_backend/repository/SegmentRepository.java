@@ -15,4 +15,5 @@ public interface SegmentRepository extends JpaRepository<Segment, UUID> {
     List<Segment> findTopByMediaOrderByScoreDesc(Media media, Pageable pageable);
 
     Page<Segment> findByMedia(Media media, Pageable pageable);
+    void deleteByMedia(Media media);
 }

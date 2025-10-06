@@ -11,6 +11,7 @@ import com.example.clipbot_backend.repository.AccountRepository;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.JobStatus;
 import com.example.clipbot_backend.util.JobType;

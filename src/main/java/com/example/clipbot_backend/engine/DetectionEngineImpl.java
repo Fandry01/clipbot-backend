@@ -4,7 +4,7 @@ import com.example.clipbot_backend.dto.*;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.service.ClipAssembler;
-import com.example.clipbot_backend.service.SilenceDetector;
+import com.example.clipbot_backend.service.Interfaces.SilenceDetector;
 import com.example.clipbot_backend.util.TranscriptUtil;
 
 import java.math.BigDecimal;
@@ -37,15 +37,15 @@ public class DetectionEngineImpl implements DetectionEngine {
         );
         // 3 Stiltes Ophalen
         List<SilenceEvent> silences = silenceDetector.detect(
-                mediaFile, params.silenceNoiseDb, params.silenceMinDurSec
+                mediaFile, params.silenceNoiseDb(), params.silenceMinDurSec()
         );
 
         //4 windows gnereren + scoren
         var wins = assembler.windows(
                 sentences, silences,
-                params.minDurationMs, params.maxDurationMs, params.snapThresholdMs,
-                params.targetLenSec, params.lenSigmaSec,
-                params.maxCandidates
+                params.minDurationMs(), params.maxDurationMs(), params.snapThresholdMs(),
+                params.targetLenSec(), params.lenSigmaSec(),
+                params.maxCandidates()
         );
 
         // 5) map naar SegmentDTO (bigDecimal score + meta met componenten)
@@ -56,9 +56,9 @@ public class DetectionEngineImpl implements DetectionEngine {
                     meta.put("startIdx", w.startIdx);
                     meta.put("endidx", w.endIdx);
                     meta.put("snapped", true);
-                    meta.put("snapThresholdMs", params.snapThresholdMs);
-                    meta.put("minDurationMs", params.minDurationMs);
-                    meta.put("maxDurationMs", params.maxDurationMs);
+                    meta.put("snapThresholdMs", params.snapThresholdMs());
+                    meta.put("minDurationMs", params.minDurationMs());
+                    meta.put("maxDurationMs", params.maxDurationMs());
                     BigDecimal score = BigDecimal.valueOf(w.score).setScale(4, RoundingMode.HALF_UP);
                     return new SegmentDTO(w.startMs, w.endMs, score, meta);
                 }
