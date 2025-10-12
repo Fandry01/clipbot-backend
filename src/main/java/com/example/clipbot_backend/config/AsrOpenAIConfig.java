@@ -13,15 +13,19 @@ import org.springframework.web.reactive.function.client.WebClient;
 @EnableConfigurationProperties(OpenAIAudioProperties.class)
 public class AsrOpenAIConfig {
     @Bean
-    @ConditionalOnProperty(name = "engine.asr", havingValue = "openai", matchIfMissing = true)
-    public TranscriptionEngine openAITranscriptEngine(
-            StorageService storageService,
-            OpenAIAudioProperties properties
-    ){
-        var client = WebClient.builder().baseUrl(properties.getBaseUrl())
-                .defaultHeaders(headers -> headers.setBearerAuth(properties.getApiKey()))
+    public WebClient openAIWebClient(OpenAIAudioProperties props) {
+        return WebClient.builder()
+                .baseUrl(props.getBaseUrl()) // https://api.openai.com
+                .defaultHeaders(h -> h.setBearerAuth(props.getApiKey()))
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(64 * 1024 * 1024))
                 .build();
-        return new OpenAITranscriptionEngine(storageService, client, properties);
     }
+
+    @Bean
+    public TranscriptionEngine openAITranscriptEngine(StorageService storage,
+                                                      WebClient openAIWebClient,
+                                                      OpenAIAudioProperties props) {
+        return new OpenAITranscriptionEngine(storage, openAIWebClient, props);
+    }
+
 }

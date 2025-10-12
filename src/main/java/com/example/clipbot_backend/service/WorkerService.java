@@ -180,7 +180,7 @@ public class WorkerService {
 
             // subtitles (optioneel)
 
-            var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "whisper").orElse(null);
+            var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "openai").orElse(null);
             SubtitleFiles subs = null;
             if (tr != null) {
                 subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());

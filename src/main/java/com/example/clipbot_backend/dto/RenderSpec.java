@@ -9,4 +9,6 @@ public record RenderSpec(@Min(144) @Max(7680) Integer width,
                          @Min(1) @Max(51)Integer crf,
                          String preset,
                          String profile) {
+    public static final RenderSpec DEFAULT =
+            new RenderSpec(1920, 1080, 30, 18, "medium", "high");
 }

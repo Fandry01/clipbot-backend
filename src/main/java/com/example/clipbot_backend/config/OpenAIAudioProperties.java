@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.config;
 
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 

@@ -8,20 +8,27 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
 
-@RestController("/v1/segments")
+@RestController
+@RequestMapping("/v1/segments")
+@Validated
 public class SegmentsController {
+
     private final SegmentService segmentService;
 
     public SegmentsController(SegmentService segmentService) {
+
         this.segmentService = segmentService;
     }
 
     @PostMapping("/batch")
+    @ResponseStatus(HttpStatus.CREATED)
     public void saveBatch(@RequestBody @Valid SaveBatchRequest request) {
         var items = request.items().stream()
                 .map(it -> new SegmentDTO(
