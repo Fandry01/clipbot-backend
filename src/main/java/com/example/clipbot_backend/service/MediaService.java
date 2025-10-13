@@ -3,6 +3,7 @@ package com.example.clipbot_backend.service;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.AccountRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
@@ -56,6 +57,21 @@ public class MediaService implements com.example.clipbot_backend.service.Interfa
         var media = mediaRepo.findById(mediaId).orElseThrow();
         media.setDurationMs(durationMs);
         mediaRepo.save(media);
+    }
+
+    @Override
+    @Transactional
+    public UUID createMediaFromUrl(UUID ownerId, String externalUrl, MediaPlatform platform, String source, Long durationMs) {
+        var owner = accountRepo.findById(ownerId).orElseThrow();
+        var media = new Media();
+        media.setOwner(owner);
+        media.setExternalUrl(externalUrl);
+        media.setPlatform(platform != null ? platform.id() : null);
+        media.setSource((source == null || source.isBlank()) ? "url" : source);
+        media.setStatus(MediaStatus.REGISTERED);
+        media.setDurationMs(durationMs);
+        mediaRepo.save(media);
+        return media.getId();
     }
 
 }

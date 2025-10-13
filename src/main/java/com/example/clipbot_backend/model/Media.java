@@ -20,11 +20,11 @@ public class Media {
             foreignKey = @ForeignKey(name = "fk_media_owner"))
     private Account owner;
 
-    @Column(name = "object_key", nullable = false, length = 1024)
+    @Column(name = "object_key", length = 1024)
     private String objectKey;
 
     @Column(name = "duration_ms")
-    private long durationMs;
+    private Long durationMs;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32)
@@ -33,11 +33,17 @@ public class Media {
     @Column(name = "source", length = 1024)
     private String source;
 
+    @Column(name = "external_url", length = 2048)
+    private String externalUrl;
+
+    @Column(name = "platform", length = 64)
+    private String platform;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDate createdAt;
 
-    public Media(UUID id, Account owner, String objectKey, long durationMs,String source, LocalDate createdAt) {
+    public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, LocalDate createdAt) {
         this.id = id;
         this.owner = owner;
         this.objectKey = objectKey;
@@ -77,11 +83,11 @@ public class Media {
         this.owner = owner;
     }
 
-    public long getDurationMs() {
+    public Long getDurationMs() {
         return durationMs;
     }
 
-    public void setDurationMs(long durationMs) {
+    public void setDurationMs(Long durationMs) {
         this.durationMs = durationMs;
     }
 
@@ -107,5 +113,21 @@ public class Media {
 
     public void setStatus(MediaStatus status) {
         this.status = status;
+    }
+
+    public String getExternalUrl() {
+        return externalUrl;
+    }
+
+    public void setExternalUrl(String externalUrl) {
+        this.externalUrl = externalUrl;
+    }
+
+    public String getPlatform() {
+        return platform;
+    }
+
+    public void setPlatform(String platform) {
+        this.platform = platform;
     }
 }

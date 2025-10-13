@@ -46,7 +46,7 @@ public class ClipService {
     public UUID createCustom(UUID mediaId, long startMs, long endMs,String title,  Map<String, Object> meta) {
         var media = mediaRepo.findById(mediaId).orElseThrow();
         if(startMs < 0 || endMs <= startMs) throw new IllegalArgumentException("Invalid bounds");
-        if(media.getDurationMs() > 0 && endMs > media.getDurationMs()) throw new IllegalArgumentException("Clip end beyond media duration");
+        if(media.getDurationMs() != null && media.getDurationMs() > 0 && endMs > media.getDurationMs()) throw new IllegalArgumentException("Clip end beyond media duration");
         var clip = new Clip(media, startMs, endMs);
         clip.setTitle(title);
         clip.setMeta(meta);

@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service.Interfaces;
 
 import com.example.clipbot_backend.model.Media;
+import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -13,4 +14,5 @@ public interface MediaService {
     Media get(UUID mediaId);
     void setStatus(UUID mediaId, MediaStatus status);
     void setDuration(UUID mediaId, long durationMs);
+    UUID createMediaFromUrl(UUID ownerId, String externalUrl, MediaPlatform platform, String source, Long durationMs);
 }
