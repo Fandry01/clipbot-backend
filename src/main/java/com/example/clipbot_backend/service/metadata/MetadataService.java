@@ -97,9 +97,6 @@ public class MetadataService {
         if (normalized.contains("vimeo")) {
             return MediaPlatform.VIMEO;
         }
-        if (normalized.contains("reddit")) {
-            return MediaPlatform.REDDIT;
-        }
         if (normalized.equals("x.com") || normalized.contains("twitter")) {
             return MediaPlatform.X;
         }
@@ -108,6 +105,9 @@ public class MetadataService {
         }
         if (normalized.contains("twitch")) {
             return MediaPlatform.TWITCH;
+        }
+        if(normalized.contains("linkedin")){
+            return MediaPlatform.LINKEDIN;
         }
         if (normalized.contains("rumble")) {
             return MediaPlatform.RUMBLE;

@@ -13,6 +13,7 @@ public enum MediaPlatform {
     FACEBOOK("facebook"),
     TWITCH("twitch"),
     RUMBLE("rumble"),
+    LINKEDIN("linkedin"),
     OTHER("other");
 
     private final String id;
