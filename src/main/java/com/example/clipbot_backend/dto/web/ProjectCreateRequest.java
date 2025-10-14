@@ -8,6 +8,6 @@ import java.util.UUID;
 public record ProjectCreateRequest(
         @NotNull UUID ownerId,
         @NotBlank String title,
-        String templateId
+        UUID templateId
 ) {
 }

@@ -25,7 +25,7 @@ public class Project {
     private String title;
 
     @Column(name = "template_id", length = 255)
-    private String templateId;
+    private UUID templateId;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -34,7 +34,7 @@ public class Project {
     protected Project() {
     }
 
-    public Project(Account owner, String title, String templateId) {
+    public Project(Account owner, String title, UUID templateId) {
         this.owner = owner;
         this.title = title;
         this.templateId = templateId;
@@ -60,11 +60,11 @@ public class Project {
         this.title = title;
     }
 
-    public String getTemplateId() {
+    public UUID getTemplateId() {
         return templateId;
     }
 
-    public void setTemplateId(String templateId) {
+    public void setTemplateId(UUID templateId) {
         this.templateId = templateId;
     }
 

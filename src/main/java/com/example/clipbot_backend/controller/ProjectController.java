@@ -1,5 +1,7 @@
 package com.example.clipbot_backend.controller;
 
+import com.example.clipbot_backend.dto.AppliedTemplateResponse;
+import com.example.clipbot_backend.dto.ApplyTemplateRequest;
 import com.example.clipbot_backend.dto.web.ClipResponse;
 import com.example.clipbot_backend.dto.web.ProjectCreateRequest;
 import com.example.clipbot_backend.dto.web.ProjectMediaLinkRequest;
@@ -8,6 +10,7 @@ import com.example.clipbot_backend.dto.web.ProjectResponse;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Project;
 import com.example.clipbot_backend.model.ProjectMediaLink;
+import com.example.clipbot_backend.service.Interfaces.TemplateService;
 import com.example.clipbot_backend.service.ProjectService;
 import com.example.clipbot_backend.util.ClipStatus;
 import jakarta.validation.Valid;
@@ -24,9 +27,11 @@ import java.util.UUID;
 @RequestMapping("/v1/projects")
 public class ProjectController {
     private final ProjectService projectService;
+    private final TemplateService templateService;
 
-    public ProjectController(ProjectService projectService) {
+    public ProjectController(ProjectService projectService, TemplateService templateService) {
         this.projectService = projectService;
+        this.templateService = templateService;
     }
 
     @PostMapping
@@ -100,4 +105,18 @@ public class ProjectController {
                 clip.getVersion()
         );
     }
+
+    @PostMapping("/{projectId}/apply-template")
+    public ResponseEntity<Void> applyTemplate(@PathVariable UUID projectId,
+                                              @RequestBody ApplyTemplateRequest req){
+        templateService.applyToProject(projectId, req);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{projectId}/template")
+    public AppliedTemplateResponse getAppliedTemplate(@PathVariable UUID projectId,
+                                                      @RequestParam UUID ownerId){
+        return templateService.getApplied(projectId, ownerId);
+    }
+
 }

@@ -42,7 +42,7 @@ public class ProjectService {
     }
 
     @Transactional
-    public Project createProject(UUID ownerId, String title, String templateId) {
+    public Project createProject(UUID ownerId, String title, UUID templateId) {
         Account owner = accountRepository.findById(ownerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OWNER_NOT_FOUND"));
         var project = new Project(owner, title, templateId);
