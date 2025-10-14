@@ -8,6 +8,6 @@ public record ProjectResponse(
         UUID ownerId,
         String title,
         Instant createdAt,
-        String templateId
+        UUID templateId
 ) {
 }
