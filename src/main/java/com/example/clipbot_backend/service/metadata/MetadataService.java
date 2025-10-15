@@ -3,6 +3,7 @@ package com.example.clipbot_backend.service.metadata;
 import com.example.clipbot_backend.util.MediaPlatform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.AnnotationAwareOrderComparator;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,13 +31,9 @@ public class MetadataService {
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     public MetadataService(List<MetadataProvider> providers) {
-        this(providers, Clock.systemUTC());
-    }
-
-    MetadataService(List<MetadataProvider> providers, Clock clock) {
-        this.providers = new ArrayList<>(providers);
+        this.providers = new ArrayList<>(providers != null ? providers : List.of());
         AnnotationAwareOrderComparator.sort(this.providers);
-        this.clock = clock;
+        this.clock = Clock.systemUTC();
     }
 
     public MetadataResult resolve(String rawUrl) {

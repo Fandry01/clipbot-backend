@@ -24,7 +24,7 @@ public class Project {
     @Column(name = "title", nullable = false, length = 255)
     private String title;
 
-    @Column(name = "template_id", length = 255)
+    @Column(name = "template_id")
     private UUID templateId;
 
     @CreationTimestamp

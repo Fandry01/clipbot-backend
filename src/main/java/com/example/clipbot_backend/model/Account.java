@@ -9,7 +9,8 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
-public class Account {
+public class
+Account {
     @Id
     @GeneratedValue
     @UuidGenerator

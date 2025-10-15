@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,8 +19,8 @@ public class Template {
     @Column(nullable = false, length = 200)
     private String name;
 
-    @Lob
-    @Column(nullable = false)
+    @JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "json_config", nullable = false, columnDefinition = "jsonb")
     private String jsonConfig; // sla volledige config als JSON string
 
     @Column(nullable = false)
