@@ -19,6 +19,7 @@ public class UploadController {
 
     @PostMapping("init")
     public UploadInitResponse init(@RequestBody UploadInitRequest request) {
+
         return uploadService.init(request);
     }
 
