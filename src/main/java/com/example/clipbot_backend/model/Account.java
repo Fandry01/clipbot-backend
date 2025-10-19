@@ -5,7 +5,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
-import java.time.LocalDate;
+
 import java.util.UUID;
 
 @Entity
@@ -17,11 +17,14 @@ Account {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "external_subject", nullable = false, length = 255)
+    @Column(name = "external_subject", nullable = false, unique = true)
     private String externalSubject;
 
-    @Column(name = "display_name", length = 255)
+    @Column(name = "display_name")
     private String displayName;
+
+    @Column(name = "email", length = 320)
+    private String email;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -64,5 +67,13 @@ Account {
 
     public long getVersion() {
         return version;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
     }
 }

@@ -5,7 +5,7 @@ import com.example.clipbot_backend.dto.web.MediaFromUrlRequest;
 import com.example.clipbot_backend.dto.web.MediaFromUrlResponse;
 import com.example.clipbot_backend.dto.web.MediaResponse;
 import com.example.clipbot_backend.model.Media;
-import com.example.clipbot_backend.service.Interfaces.MediaService;
+import com.example.clipbot_backend.service.MediaService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.util.MediaPlatform;
@@ -52,7 +52,7 @@ public class MediaController {
             if ("METADATA_FETCH_FAILED".equals(ex.getReason())) {
                 MediaPlatform platform = metadataService.detectPlatform(request.url());
                 String normalizedUrl = metadataService.normalizeUrl(request.url());
-                var mediaId = mediaService.createMediaFromUrl(request.ownerId(), normalizedUrl, platform, source, null);
+                var mediaId = mediaService.createMediaFromUrl(request.ownerId(), normalizedUrl, platform, source, null, objectKeyOverride);
                 return new MediaFromUrlResponse(mediaId, MediaStatus.REGISTERED.name(), platform.id(), null, null);
             }
             throw ex;
@@ -66,7 +66,7 @@ public class MediaController {
                 durationMs = Long.MAX_VALUE;
             }
         }
-        var mediaId = mediaService.createMediaFromUrl(request.ownerId(), metadata.url(), metadata.platform(), source, durationMs);
+        var mediaId = mediaService.createMediaFromUrl(request.ownerId(), metadata.url(), metadata.platform(), source, durationMs,objectKeyOverride);
         return new MediaFromUrlResponse(mediaId, MediaStatus.REGISTERED.name(), metadata.platform().id(), durationMs, null);
     }
 

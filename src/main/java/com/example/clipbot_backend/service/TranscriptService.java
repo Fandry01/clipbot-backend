@@ -23,6 +23,13 @@ public class TranscriptService {
         this.transcriptRepo = transcriptRepo;
         this.mediaRepo = mediaRepo;
     }
+    /** Idempotentie: is er *enig* transcript (ongeacht lang/provider) voor dit mediaId? */
+    @Transactional()
+    public boolean existsAnyFor(UUID mediaId) {
+        // getReferenceById vermijdt DB-hit voor het object zelf (proxy), en laat JPA de exists-query doen
+        Media mediaRef = mediaRepo.getReferenceById(mediaId);
+        return transcriptRepo.existsByMedia(mediaRef);
+    }
 
 
     @Transactional

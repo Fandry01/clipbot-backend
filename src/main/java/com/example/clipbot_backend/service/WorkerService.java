@@ -20,10 +20,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.nio.file.Path;
+import java.util.*;
 
 @Service
 public class WorkerService {
@@ -36,6 +34,7 @@ public class WorkerService {
     private final SegmentRepository segmentRepo;
     private final ClipRepository clipRepo;
     private final AssetRepository assetRepo;
+    private final UrlDownloader urlDownloader;
 
     // engines
     private final TranscriptionEngine transcriptionEngine;
@@ -45,7 +44,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -53,6 +52,7 @@ public class WorkerService {
         this.segmentRepo = segmentRepo;
         this.clipRepo = clipRepo;
         this.assetRepo = assetRepo;
+        this.urlDownloader = urlDownloader;
         this.transcriptionEngine = transcription;
         this.detection = detection;
         this.renderEngine = renderEngine;
@@ -78,37 +78,98 @@ public class WorkerService {
     }
 
 @Transactional
-     void handleTranscribe(Job job) throws Exception {
-        UUID mediaId = (job.getMedia() != null ? job.getMedia().getId() : null);
+void handleTranscribe(Job job) {
+    Objects.requireNonNull(job, "job");
+    final UUID mediaId = job.getMedia() != null ? job.getMedia().getId() : null;
+    if (mediaId == null) {
+        jobService.markError(job.getId(), "MEDIA_MISSING", Map.of());
+        return;
+    }
+
+    try {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
 
-            long t0 = System.nanoTime();
-            // 1) Transcribe via nieuwe interface (engine resolve't zelf raw via object
-            var request = new TranscriptionEngine.Request(
-                    media.getId(),
-                    media.getObjectKey(),
-                    null
-            );
-            var res = transcriptionEngine.transcribe(request);
-            // 2) Upsert Transcript (tekst + words JSON) via service
-            transcriptService.upsert(media.getId(), res);
+        // 0) Idempotent: als transcript al bestaat → overslaan en direct DETECT enqueuen
+        if (transcriptService.existsAnyFor(mediaId)) {
+            jobService.markDone(job.getId(), Map.of("skipped", "already_transcribed"));
+            jobService.enqueue(mediaId, JobType.DETECT, Map.of());
+            return;
+        }
 
-            // 3) Media-status bijwerken (kies wat je hebt: TRANSCRIBED/PROCESSING/READY_FOR_DETECT)
-            media.setStatus(MediaStatus.PROCESSING);
+        // 1) ObjectKey normaliseren (fallback voor oude records)
+        String key = media.getObjectKey();
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("media.objectKey is blank");
+        }
+        boolean hadNoFilename = !key.contains(".");
+        if (hadNoFilename) {
+            key = key.endsWith("/") ? key + "source.mp3" : key + "/source.mp3";
+            // schrijf terug, zodat toekomstige jobs consistent zijn
+            media.setObjectKey(key);
             mediaRepo.save(media);
+        }
 
-            // 4) Job afronden + detect enqueuen
-            jobService.markDone(job.getId(), Map.of(
-                    "transcriptLang", res.lang(),
-                    "provider", res.provider()
-            ));
-            jobService.enqueue(media.getId(), JobType.DETECT, Map.of(
-                    "lang", res.lang(),
-                    "provider", res.provider()
-            ));
+        // 2) Inputbestand garanderen in RAW
+        Path input;
+        String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
+        if ("url".equals(src)) {
+            // Download naar RAW als het er niet staat. Laat de downloader exact onder `key` plaatsen.
+            input = urlDownloader.ensureRawObject(
+                    Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source"),
+                    key
+            );
+        } else {
+            // upload-flow: bestand moet al in RAW staan
+            if (!storage.existsInRaw(key)) {
+                throw new IllegalArgumentException("input not found in RAW: " + key);
+            }
+            input = storage.resolveRaw(key);
+        }
 
-          LOGGER.info("TRANSCRIBE {} done in {} ms (lang={}, provider={})",
-        mediaId, (System.nanoTime()-t0)/1_000_000, res.lang(), res.provider());
+        long t0 = System.nanoTime();
+
+        // 3) Transcribe
+        var req = new TranscriptionEngine.Request(
+                media.getId(),
+                key,          // laat engine zelf resolveRaw(key) doen (liefst via StorageService-injectie)
+                null          // extra opties (bijv. target lang) optioneel
+        );
+        var res = transcriptionEngine.transcribe(req);
+
+        // 4) Transcript upsert
+        transcriptService.upsert(media.getId(), res);
+
+        // 5) Media-status bijwerken
+        // Kies consistente states voor je CHECK-constraint. Voorstel:
+        // UPLOADED -> TRANSCRIBED -> (na detect) READY
+        media.setStatus(MediaStatus.PROCESSING);
+        mediaRepo.save(media);
+
+        // 6) Job afronden + Detect enqueuen
+        jobService.markDone(job.getId(), Map.of(
+                "lang", res.lang(),
+                "provider", res.provider(),
+                "durationMs", (System.nanoTime() - t0) / 1_000_000
+        ));
+        jobService.enqueue(media.getId(), JobType.DETECT, Map.of(
+                "lang", res.lang(),
+                "provider", res.provider()
+        ));
+
+        LOGGER.info("TRANSCRIBE {} OK in {} ms (lang={}, provider={})",
+                mediaId, (System.nanoTime() - t0) / 1_000_000, res.lang(), res.provider());
+
+    } catch (Exception ex) {
+        LOGGER.error("TRANSCRIBE {} failed: {}", mediaId, ex.toString(), ex);
+        jobService.markError(job.getId(), ex.getMessage(), Map.of("stack", stackTop(ex)));
+    }
+}
+    private String stackTop(Throwable ex) {
+        var sw = new java.io.StringWriter();
+        ex.printStackTrace(new java.io.PrintWriter(sw));
+        // om payload compact te houden kun je eventueel alleen de eerste ~1–2 KB bewaren
+        var s = sw.toString();
+        return s.length() > 2000 ? s.substring(0, 2000) + "…(truncated)" : s;
     }
 
     @Transactional
