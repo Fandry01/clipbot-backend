@@ -9,6 +9,7 @@ import java.util.UUID;
 public record MediaFromUrlRequest(
         @NotNull UUID ownerId,
         @NotBlank @Size(max = 2048) String url,
-        String source
+        String source,
+        String objectKeyOverride
 ) {
 }

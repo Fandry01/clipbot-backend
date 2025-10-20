@@ -44,30 +44,51 @@ public class MediaController {
 
     @PostMapping("/from-url")
     public MediaFromUrlResponse createFromUrl(@Valid @RequestBody MediaFromUrlRequest request) {
-        var source = (request.source() == null || request.source().isBlank()) ? "url" : request.source();
-        MetadataResult metadata;
+        final String source = (request.source() == null || request.source().isBlank()) ? "url" : request.source();
+
+        // 1) Probeer metadata op te halen
+        MetadataResult md = null;
         try {
-            metadata = metadataService.resolve(request.url());
+            md = metadataService.resolve(request.url());
         } catch (ResponseStatusException ex) {
-            if ("METADATA_FETCH_FAILED".equals(ex.getReason())) {
-                MediaPlatform platform = metadataService.detectPlatform(request.url());
-                String normalizedUrl = metadataService.normalizeUrl(request.url());
-                var mediaId = mediaService.createMediaFromUrl(request.ownerId(), normalizedUrl, platform, source, null, objectKeyOverride);
-                return new MediaFromUrlResponse(mediaId, MediaStatus.REGISTERED.name(), platform.id(), null, null);
-            }
-            throw ex;
+            // Alleen fallbacken als het echt een fetch-issue was; anders hergooien
+            if (!"METADATA_FETCH_FAILED".equals(ex.getReason())) throw ex;
         }
 
-        Long durationMs = null;
-        if (metadata.durationSec() != null) {
-            try {
-                durationMs = Math.multiplyExact(metadata.durationSec(), 1000L);
-            } catch (ArithmeticException ignored) {
-                durationMs = Long.MAX_VALUE;
-            }
+        // 2) Normalize + platform + duration
+        final String normalizedUrl = (md != null ? md.url() : metadataService.normalizeUrl(request.url()));
+        final MediaPlatform platform = (md != null ? md.platform() : metadataService.detectPlatform(request.url()));
+        final Long durationMs = (md != null && md.durationSec() != null)
+                ? safeToMillis(md.durationSec())
+                : null;
+
+        // 3) Maak media aan (status = UPLOADED in service)
+        UUID mediaId = mediaService.createMediaFromUrl(
+                request.ownerId(),
+                normalizedUrl,
+                platform,
+                source,
+                durationMs,
+                request.objectKeyOverride() // mag null zijn
+        );
+
+        // 4) Response terug (platform-id + evt. duration/thumbnail)
+        assert md != null;
+        return new MediaFromUrlResponse(
+                mediaId,
+                MediaStatus.UPLOADED.name(),            // conform CHECK constraint
+                platform.id(),
+                durationMs,
+                (md != null ? md.thumbnail() : null),
+                md.thumbnail()
+        );
+    }
+    private static Long safeToMillis(Long sec) {
+        try {
+            return Math.multiplyExact(sec, 1000L);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
         }
-        var mediaId = mediaService.createMediaFromUrl(request.ownerId(), metadata.url(), metadata.platform(), source, durationMs,objectKeyOverride);
-        return new MediaFromUrlResponse(mediaId, MediaStatus.REGISTERED.name(), metadata.platform().id(), durationMs, null);
     }
 
     @GetMapping("/owner/{ownerId}")

@@ -10,6 +10,7 @@ public record MediaFromUrlResponse(
         String status,
         String platform,
         Long durationMs,
-        String objectKey
+        String objectKey,
+        String thumbnail
 ) {
 }
