@@ -17,6 +17,7 @@ import com.example.clipbot_backend.util.MediaStatus;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -44,7 +45,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, @Qualifier("openAITranscriptionEngine")TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -99,14 +100,7 @@ void handleTranscribe(Job job) {
         // 1) ObjectKey normaliseren (fallback voor oude records)
         String key = media.getObjectKey();
         if (key == null || key.isBlank()) {
-            throw new IllegalArgumentException("media.objectKey is blank");
-        }
-        boolean hadNoFilename = !key.contains(".");
-        if (hadNoFilename) {
-            key = key.endsWith("/") ? key + "source.mp3" : key + "/source.mp3";
-            // schrijf terug, zodat toekomstige jobs consistent zijn
-            media.setObjectKey(key);
-            mediaRepo.save(media);
+            throw new IllegalArgumentException("media.objectKey invalid: " + key);
         }
 
         // 2) Inputbestand garanderen in RAW
@@ -118,13 +112,9 @@ void handleTranscribe(Job job) {
                     Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source"),
                     key
             );
-        } else {
-            // upload-flow: bestand moet al in RAW staan
-            if (!storage.existsInRaw(key)) {
-                throw new IllegalArgumentException("input not found in RAW: " + key);
-            }
-            input = storage.resolveRaw(key);
         }
+        media.setStatus(MediaStatus.PROCESSING);
+        mediaRepo.save(media);
 
         long t0 = System.nanoTime();
 
@@ -139,13 +129,8 @@ void handleTranscribe(Job job) {
         // 4) Transcript upsert
         transcriptService.upsert(media.getId(), res);
 
-        // 5) Media-status bijwerken
-        // Kies consistente states voor je CHECK-constraint. Voorstel:
-        // UPLOADED -> TRANSCRIBED -> (na detect) READY
-        media.setStatus(MediaStatus.PROCESSING);
-        mediaRepo.save(media);
 
-        // 6) Job afronden + Detect enqueuen
+        // 5) Job afronden + Detect enqueuen
         jobService.markDone(job.getId(), Map.of(
                 "lang", res.lang(),
                 "provider", res.provider(),

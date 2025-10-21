@@ -116,7 +116,7 @@ public class MediaService  {
 
         // Conventie: pad Eindigt op een BESTANDSNAAM die we downstream kunnen openen.
         // Audio als standaard is prima voor transcriptie:
-        return "ext/" + slug + "/" + idPart + "/source.mp3";
+        return "ext/" + slug + "/" + idPart + "/source.m4a";
     }
 
     // kleine helper: backslashes → forward slashes, leading slashes weg
@@ -125,7 +125,7 @@ public class MediaService  {
         // Als caller alleen een map gaf, voeg dan ook een bestandsnaam toe
         if (!k.contains(".")) {
             if (!k.endsWith("/")) k += "/";
-            k += "source.mp3";
+            k += "source.m4a";
         }
         return k;
     }

@@ -14,8 +14,7 @@ import reactor.netty.http.client.HttpClient;
 @Configuration
 public class MetadataClientConfig {
 
-    @Bean
-    @Qualifier("metadataWebClient")
+    @Bean("metadataWebClient")
     public WebClient metadataWebClient(WebClient.Builder builder) {
         HttpClient http = HttpClient.create()
                 .followRedirect(true) // ← belangrijk

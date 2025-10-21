@@ -1,58 +1,51 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.service.Interfaces.StorageService;
-import org.springframework.stereotype.Service;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-@Service
+@Component
 public class UrlDownloader {
     private final StorageService storage;
+    private final String ytdlp;
 
-    public UrlDownloader(StorageService storage) {
+    public UrlDownloader(StorageService storage,
+                         @Value("${downloader.ytdlp.bin:yt-dlp}") String ytdlp) {
         this.storage = storage;
+        this.ytdlp = ytdlp;
     }
 
-    /**
-     * Zorgt dat objectKey in RAW bestaat.
-     * Verwacht dat objectKey een pad met bestandsnaam is, bv: ext/yt/<id>/source.mp3
-     * @return het Path naar het bestand in RAW
-     */
-    public Path ensureRawObject(String externalUrl, String objectKey) {
-        if (storage.existsInRaw(objectKey)) {
-            return storage.resolveRaw(objectKey);
-        }
-        // Download naar temp
+    /** Downloadt naar RAW exact op objectKey en retourneert dat pad */
+    public Path ensureRawObject(String url, String objectKey) {
+        Path target = storage.resolveRaw(objectKey); // bv data/raw/ext/yt/ID/source.m4a
         try {
-            Path tmp = Files.createTempFile("dl-", ".bin");
+            Files.createDirectories(target.getParent());
+            // Als het al bestaat: meteen terug
+            if (Files.exists(target)) return target;
 
-            // Gebruik yt-dlp voor YouTube (en co); als fallback kun je later HTTP GET doen
-            // Download audio-only naar tmp (we overwrite tmp)
-            ProcessBuilder pb = new ProcessBuilder(
-                    "yt-dlp",
-                    "-x", "--audio-format", "mp3",
-                    "-o", tmp.toAbsolutePath().toString(),   // direct naar tmp
-                    externalUrl
-            );
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
-                String line; while ((line = r.readLine()) != null) {
-                    // log desnoods
-                }
-            }
+            Process p = new ProcessBuilder(
+                    ytdlp, "-x", "--audio-format", "m4a",
+                    "--no-playlist",
+                    "-o", target.toString(),  // << exact output pad
+                    url
+            )
+                    .redirectErrorStream(true)
+                    .start();
+
+            // (optioneel) lees logs voor debug:
+            try (var in = p.getInputStream()) { in.transferTo(System.out); }
             int code = p.waitFor();
-            if (code != 0) throw new IllegalStateException("yt-dlp failed with exit code " + code);
-
-            // Zet naar RAW onder objectKey
-            storage.uploadToRaw(tmp, objectKey);
-            Files.deleteIfExists(tmp);
-
-            return storage.resolveRaw(objectKey);
+            if (code != 0 || !Files.exists(target)) {
+                throw new IllegalStateException("yt-dlp exit=" + code + " output missing: " + target);
+            }
+            return target;
         } catch (Exception e) {
-            throw new IllegalStateException("Download failed for " + externalUrl + ": " + e.getMessage(), e);
+            throw new IllegalStateException("Download failed for " + url + ": " + e.getMessage(), e);
         }
     }
 }
-
