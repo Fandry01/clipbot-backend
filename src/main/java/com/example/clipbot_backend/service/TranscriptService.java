@@ -8,10 +8,7 @@ import com.example.clipbot_backend.repository.TranscriptRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class TranscriptService {
@@ -41,8 +38,8 @@ public class TranscriptService {
                 .orElseGet(() -> new Transcript(media, res.lang(), res.provider()));
 
         transcript.setMedia(media);
-        transcript.setLang(res.lang());
-        transcript.setProvider(res.provider());
+        transcript.setLang(res.lang() != null ? res.lang() : "auto");
+        transcript.setProvider(res.provider() != null ? res.provider() : "unknown");
         transcript.setText(res.text() != null ? res.text() : "");
 
         // Words -> JSON document
@@ -53,11 +50,19 @@ public class TranscriptService {
                 "text",    w.text()
         )).toList();
 
-        Map<String, Object> wordsDoc = Map.of(
-                "schema", "v1",
-                "generatedAt", java.time.Instant.now().toString(),
-                "items", items
-        );
+        // >>> Gebruik een MUTABLE map i.p.v. Map.of(...)
+        Map<String, Object> wordsDoc = new LinkedHashMap<>();
+        wordsDoc.put("schema", "v1");
+        wordsDoc.put("generatedAt", java.time.Instant.now().toString());
+        wordsDoc.put("items", items);
+
+        // >>> Meta uit Result heet 'meta', niet 'metadata'
+        Object segsObj = (res.meta() == null) ? null : res.meta().get("segments");
+        if (segsObj instanceof List<?> segs) {
+            wordsDoc.put("segments", segs);
+            wordsDoc.put("diarizeProvider", res.provider());
+        }
+
         transcript.setWords(wordsDoc);
 
         transcriptRepo.save(transcript);

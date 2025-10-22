@@ -1,12 +1,18 @@
 package com.example.clipbot_backend.model;
 
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
+import java.beans.Transient;
 import java.time.LocalDate;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
+
+import static com.example.clipbot_backend.util.SpeakerMode.*;
 
 @Entity
 public class Media {
@@ -43,12 +49,20 @@ public class Media {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDate createdAt;
 
+    @Column(name = "is_multi_speaker")
+    private Boolean isMultiSpeaker;
+
+    @Column(name = "speaker_count_detected")
+    private Integer speakerCountDetected;
+
+    @Enumerated(EnumType.STRING)
+    private SpeakerMode speakerMode;
+
     public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, LocalDate createdAt) {
         this.id = id;
         this.owner = owner;
         this.objectKey = objectKey;
         this.durationMs = durationMs;
-
         this.source = source;
         this.createdAt = createdAt;
     }
@@ -130,4 +144,39 @@ public class Media {
     public void setPlatform(String platform) {
         this.platform = platform;
     }
+
+    public Boolean getMultiSpeaker() {
+        return isMultiSpeaker;
+    }
+
+    public void setMultiSpeaker(Boolean multiSpeaker) {
+        isMultiSpeaker = multiSpeaker;
+    }
+
+    public Integer getSpeakerCountDetected() {
+        return speakerCountDetected;
+    }
+
+    public void setSpeakerCountDetected(Integer speakerCountDetected) {
+        this.speakerCountDetected = speakerCountDetected;
+    }
+
+    public SpeakerMode getSpeakerMode() {
+        return speakerMode;
+    }
+
+    public void setSpeakerMode(SpeakerMode speakerMode) {
+        this.speakerMode = speakerMode;
+    }
+
+    @Transient
+    public boolean isMultiSpeakerEffective() {
+        SpeakerMode mode = this.speakerMode != null ? this.speakerMode : SpeakerMode.AUTO;
+        return switch (mode) {
+            case MULTI  -> true;                                  // Interview/Podcast
+            case SINGLE -> false;                                 // Monologue
+            case AUTO   -> (speakerCountDetected != null && speakerCountDetected > 1);
+        };
+    }
 }
+

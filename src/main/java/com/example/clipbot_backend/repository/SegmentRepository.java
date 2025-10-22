@@ -5,7 +5,9 @@ import com.example.clipbot_backend.model.Segment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -16,5 +18,7 @@ public interface SegmentRepository extends JpaRepository<Segment, UUID> {
     List<Segment> findByMediaOrderByStartMsAsc(Media media);
 
     Page<Segment> findByMedia(Media media, Pageable pageable);
-    void deleteByMedia(Media media);
+    @Modifying
+    @Query("delete from Segment s where s.media = :media")
+    void deleteByMedia(@Param("media") Media media);;
 }

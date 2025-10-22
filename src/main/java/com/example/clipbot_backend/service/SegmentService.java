@@ -11,6 +11,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,12 +28,14 @@ private final MediaRepository mediaRepo;
     @Transactional
     public void saveBatch(UUID mediaId, List<SegmentDTO> items) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
+        List<Segment> toSave = new ArrayList<>(items.size());
         for(SegmentDTO segment : items) {
             Segment seg = new Segment(media, segment.startMs(), segment.endMs());
             seg.setScore(segment.score());
             seg.setMeta(segment.meta());
-            segmentRepo.save(seg);
+            toSave.add(seg);
         }
+        segmentRepo.saveAll(toSave);
     }
 
     public Page<Segment> list(UUID mediaId, Pageable pageable) {
@@ -47,6 +50,6 @@ private final MediaRepository mediaRepo;
     @Transactional
     public void deleteByMedia(UUID mediaId) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
-        segmentRepo.deleteAll(segmentRepo.findByMedia(media, org.springframework.data.domain.PageRequest.of(0, Integer.MAX_VALUE)).getContent());
+        segmentRepo.deleteByMedia(media);
     }
 }

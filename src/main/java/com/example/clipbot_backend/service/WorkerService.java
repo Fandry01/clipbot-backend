@@ -1,8 +1,6 @@
 package com.example.clipbot_backend.service;
 
-import com.example.clipbot_backend.dto.RenderOptions;
-import com.example.clipbot_backend.dto.SubtitleFiles;
-import com.example.clipbot_backend.dto.DetectionParams;
+import com.example.clipbot_backend.dto.*;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
@@ -21,6 +19,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.beans.Transient;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -36,16 +36,19 @@ public class WorkerService {
     private final ClipRepository clipRepo;
     private final AssetRepository assetRepo;
     private final UrlDownloader urlDownloader;
+    private final FasterWhisperClient fastWhisperClient;
+    private final AudioWindowService audioWindowService;
 
     // engines
-    private final TranscriptionEngine transcriptionEngine;
+     TranscriptionEngine gptDiarizeEngine;
+     TranscriptionEngine fasterWhisperEngine;
     private final DetectionEngine detection;
     private final ClipRenderEngine renderEngine;
     private final StorageService storage;
     private final SubtitleService subtitles;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, @Qualifier("openAITranscriptionEngine")TranscriptionEngine transcription, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -54,11 +57,14 @@ public class WorkerService {
         this.clipRepo = clipRepo;
         this.assetRepo = assetRepo;
         this.urlDownloader = urlDownloader;
-        this.transcriptionEngine = transcription;
+        this.fastWhisperClient = fastWhisperClient;
+        this.audioWindowService = audioWindowService;
         this.detection = detection;
         this.renderEngine = renderEngine;
         this.storage = storage;
         this.subtitles = subtitles;
+        this.gptDiarizeEngine = gptDiarizeEngine;
+        this.fasterWhisperEngine = fasterWhisperEngine;
     }
 
     @Scheduled(fixedDelayString = "3000")
@@ -103,6 +109,9 @@ void handleTranscribe(Job job) {
             throw new IllegalArgumentException("media.objectKey invalid: " + key);
         }
 
+        boolean isMulti = media.isMultiSpeakerEffective();
+        TranscriptionEngine engine = isMulti ? gptDiarizeEngine : fasterWhisperEngine;
+
         // 2) Inputbestand garanderen in RAW
         Path input;
         String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
@@ -124,7 +133,7 @@ void handleTranscribe(Job job) {
                 key,          // laat engine zelf resolveRaw(key) doen (liefst via StorageService-injectie)
                 null          // extra opties (bijv. target lang) optioneel
         );
-        var res = transcriptionEngine.transcribe(req);
+        var res = engine.transcribe(req);
 
         // 4) Transcript upsert
         transcriptService.upsert(media.getId(), res);
@@ -161,9 +170,11 @@ void handleTranscribe(Job job) {
     void handleDetect(Job job) throws Exception {
         var media = mediaRepo.findById(job.getMedia().getId()).orElseThrow();
         //1) Transcript kiezen payload > latest by createdAt
+        Optional<Transcript> trOpt = Optional.empty();
+
         String lang = (String) job.getPayload().getOrDefault("lang", null);
         String provider = (String) job.getPayload().getOrDefault("provider", null);
-        Optional<Transcript> trOpt;
+
         if(lang != null && provider != null) {
             trOpt = transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider);
         } else {
@@ -176,6 +187,7 @@ void handleTranscribe(Job job) {
             return;
         }
         var tr = trOpt.get();
+
         var srcPath = storage.resolveRaw(media.getObjectKey());
         var params = DetectionParams.defaults().withMaxCandidates(8);
         Object sceneThresholdValue = job.getPayload().get("sceneThreshold");
@@ -197,13 +209,24 @@ void handleTranscribe(Job job) {
             );
         }
         long T0 = System.nanoTime();
-        var segments = detection.detect(srcPath, tr, params);
+        var detected = detection.detect(srcPath, tr, params);
+
+        long pad = 500;
+        List<SegmentDTO> refined = new ArrayList<>(detected.size());
+        for (var s : detected) {
+            var win = audioWindowService.sliceToTempWav(srcPath, s.startMs(), s.endMs(), pad);
+            var fw = fastWhisperClient.transcribeFile(win.file(), true);
+            var snapped = snapToWordBounds(s, fw, win.offsetMs());
+            refined.add(snapped);
+            try { Files.deleteIfExists(win.file()); } catch (Exception ignore) {}
+        }
+
         // 4) Idempotent wegschrijven
         segmentRepo.deleteByMedia(media);
-        if(!segments.isEmpty()) {
-            var toSave = new ArrayList<Segment>(segments.size());
+        if(!refined.isEmpty()) {
+            var toSave = new ArrayList<Segment>(refined.size());
             // save batch
-            for(var s : segments){
+            for(var s : refined) {
                 var seg = new Segment(media, s.startMs(), s.endMs());
                 seg.setScore(s.score());
                 seg.setMeta(s.meta());
@@ -213,7 +236,7 @@ void handleTranscribe(Job job) {
         }
 
 
-        jobService.markDone(job.getId(), Map.of("segmentCount", segments.size()));
+        jobService.markDone(job.getId(), Map.of("segmentCount", refined.size()));
     }
 
     @Transactional
@@ -255,5 +278,30 @@ void handleTranscribe(Job job) {
             LOGGER.info("CLIP {} ready (mp4Key={})", clipId, res.mp4Key());
 
     }
+    private SegmentDTO snapToWordBounds(SegmentDTO seg, FwVerboseResponse fw, long offsetMs) {
+        long s = seg.startMs();
+        long e = seg.endMs();
+        long bestS = s, bestE = e;
+
+        if (fw != null && fw.segments() != null) {
+            for (var fs : fw.segments()) {
+                if (fs.words() == null) continue;
+                for (var w : fs.words()) {
+                    long ws = Math.round((w.start() == null ? 0.0 : w.start()) * 1000) + offsetMs;
+                    long we = Math.round((w.end()   == null ? 0.0 : w.end())   * 1000) + offsetMs;
+
+                    if (Math.abs(ws - s) < Math.abs(bestS - s)) bestS = ws;
+                    if (Math.abs(we - e) < Math.abs(bestE - e)) bestE = we;
+                }
+            }
+        }
+        if (bestE <= bestS) { bestS = s; bestE = e; }
+
+        Map<String,Object> meta = new LinkedHashMap<>(seg.meta()==null?Map.of():seg.meta());
+        meta.put("refined", true);
+        meta.put("offsetMs", offsetMs);
+        return new SegmentDTO(bestS, bestE, seg.score(), meta);
+    }
+
 
 }
