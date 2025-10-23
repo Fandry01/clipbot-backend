@@ -12,7 +12,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,13 +23,11 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
     private final StorageService storage;
     private final WebClient openAiClient;
     private final OpenAIAudioProperties props;
-    private final Duration timeout;
 
-    public GptDiarizeTranscriptionEngine(StorageService storage, @Qualifier("openAiWebClient")WebClient openAiClient, OpenAIAudioProperties props, Duration timeout) {
+    public GptDiarizeTranscriptionEngine(StorageService storage, @Qualifier("openAiWebClient")WebClient openAiClient, OpenAIAudioProperties props) {
         this.storage = storage;
         this.openAiClient = openAiClient;
         this.props = props;
-        this.timeout = timeout;
     }
 
     @Override
@@ -51,7 +48,7 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
                 .body(BodyInserters.fromMultipartData(form))
                 .retrieve()
                 .bodyToMono(String.class)
-                .block(timeout);
+                .block();
 
         var root = new ObjectMapper().readTree(json);
         String text = root.path("text").asText("");

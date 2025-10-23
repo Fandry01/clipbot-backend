@@ -9,7 +9,7 @@ public class OpenAIAudioProperties {
 
     private String baseUrl = "https://api.openai.com";
     private String apiKey;
-    private String model = "gpt-4o-transcribe";
+    private String model = "gpt-4o-transcribe-diarize";
     private String language = "auto";
     private long timeoutSeconds = 300;
 

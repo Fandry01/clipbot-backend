@@ -1,14 +1,39 @@
 package com.example.clipbot_backend.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
+
+import java.time.Duration;
 
 @Configuration
+@EnableConfigurationProperties(FwProperties.class)
 public class FwClientConfig {
+
     @Bean("fwWebClient")
-    public WebClient fwWebClient(@Value("${fw.base-url}") String baseUrl) {
-        return WebClient.builder().baseUrl(baseUrl).build();
+    public WebClient fwWebClient(FwProperties props) {
+        var to = Duration.ofSeconds(props.getTimeoutSeconds());
+
+        ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024)) // 16MB i.p.v. default ~256KB
+                .build();
+
+        HttpClient http = HttpClient.create()
+                .responseTimeout(to)
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                .doOnConnected(conn -> conn
+                        .addHandlerLast(new io.netty.handler.timeout.ReadTimeoutHandler(150))
+                        .addHandlerLast(new io.netty.handler.timeout.WriteTimeoutHandler(150)));
+
+        return WebClient.builder()
+                .baseUrl(props.getBaseUrl())
+                .clientConnector(new ReactorClientHttpConnector(http))
+                .exchangeStrategies(strategies)
+                .build();
     }
 }

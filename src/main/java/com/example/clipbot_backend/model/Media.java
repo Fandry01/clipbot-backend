@@ -49,8 +49,6 @@ public class Media {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDate createdAt;
 
-    @Column(name = "is_multi_speaker")
-    private Boolean isMultiSpeaker;
 
     @Column(name = "speaker_count_detected")
     private Integer speakerCountDetected;
@@ -143,14 +141,6 @@ public class Media {
 
     public void setPlatform(String platform) {
         this.platform = platform;
-    }
-
-    public Boolean getMultiSpeaker() {
-        return isMultiSpeaker;
-    }
-
-    public void setMultiSpeaker(Boolean multiSpeaker) {
-        isMultiSpeaker = multiSpeaker;
     }
 
     public Integer getSpeakerCountDetected() {
