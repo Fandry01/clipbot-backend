@@ -19,7 +19,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.beans.Transient;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
