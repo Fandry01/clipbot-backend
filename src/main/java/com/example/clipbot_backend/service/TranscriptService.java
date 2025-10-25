@@ -34,7 +34,7 @@ public class TranscriptService {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
 
         Transcript transcript = transcriptRepo
-                .findByMediaAndLangAndProvider(media, res.lang(), res.provider())
+                .findByMediaAndLangAndProvider(media)
                 .orElseGet(() -> new Transcript(media, res.lang(), res.provider()));
 
         transcript.setMedia(media);
@@ -73,6 +73,6 @@ public class TranscriptService {
 
     public Optional<Transcript> get(UUID mediaId, String lang, String provider){
         Media media = mediaRepo.findById(mediaId).orElseThrow();
-        return transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider);
+        return transcriptRepo.findByMediaAndLangAndProvider(media);
     }
 }

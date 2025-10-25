@@ -1,0 +1,1 @@
+ALTER TABLE media ALTER COLUMN speaker_mode SET DEFAULT 'AUTO';

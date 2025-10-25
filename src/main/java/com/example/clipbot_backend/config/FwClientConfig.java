@@ -25,10 +25,10 @@ public class FwClientConfig {
 
         HttpClient http = HttpClient.create()
                 .responseTimeout(to)
-                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 15_000)
                 .doOnConnected(conn -> conn
-                        .addHandlerLast(new io.netty.handler.timeout.ReadTimeoutHandler(150))
-                        .addHandlerLast(new io.netty.handler.timeout.WriteTimeoutHandler(150)));
+                        .addHandlerLast(new io.netty.handler.timeout.ReadTimeoutHandler(300))
+                        .addHandlerLast(new io.netty.handler.timeout.WriteTimeoutHandler(300)));
 
         return WebClient.builder()
                 .baseUrl(props.getBaseUrl())

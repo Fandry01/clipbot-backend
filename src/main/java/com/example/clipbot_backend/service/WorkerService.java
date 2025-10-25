@@ -24,6 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
+import static com.example.clipbot_backend.util.JobType.DETECT;
+
 @Service
 public class WorkerService {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerService.class);
@@ -38,6 +40,7 @@ public class WorkerService {
     private final UrlDownloader urlDownloader;
     private final FasterWhisperClient fastWhisperClient;
     private final AudioWindowService audioWindowService;
+    private final DetectWorkflow detectWorkflow;
 
     // engines
      TranscriptionEngine gptDiarizeEngine;
@@ -48,7 +51,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -59,6 +62,7 @@ public class WorkerService {
         this.urlDownloader = urlDownloader;
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
+        this.detectWorkflow = detectWorkflow;
         this.detection = detection;
         this.renderEngine = renderEngine;
         this.storage = storage;
@@ -71,15 +75,21 @@ public class WorkerService {
     public void poll() {
         jobService.pickOneQueued().ifPresent(job -> {
             try {
-                switch (job.getType()){
+                switch (job.getType()) {
                     case TRANSCRIBE -> handleTranscribe(job);
-                    case DETECT     -> handleDetect(job);
-                    case CLIP       -> handleClip(job);
-                    default         -> LOGGER.warn("Unhandeld job type {}", job.getType());
+
+                    case DETECT -> {
+                        int count = detectWorkflow.run(job.getMedia().getId(), job.getPayload());
+                        jobService.markDone(job.getId(), Map.of("segmentCount", count));
+                    }
+
+                    case CLIP -> handleClip(job);
+
+                    default -> LOGGER.warn("Unhandeld job type {}", job.getType());
                 }
             } catch (Exception e) {
                 LOGGER.error("Job {}  Failed: {}", job.getId(), e.getMessage(), e);
-                jobService.markError(job.getId(), e.getMessage(), Map.of());
+                jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
             }
         });
     }
@@ -99,7 +109,7 @@ void handleTranscribe(Job job) {
         // 0) Idempotent: als transcript al bestaat → overslaan en direct DETECT enqueuen
         if (transcriptService.existsAnyFor(mediaId)) {
             jobService.markDone(job.getId(), Map.of("skipped", "already_transcribed"));
-            jobService.enqueue(mediaId, JobType.DETECT, Map.of());
+            jobService.enqueue(mediaId, DETECT, Map.of());
             return;
         }
 
@@ -145,7 +155,7 @@ void handleTranscribe(Job job) {
                 "provider", res.provider(),
                 "durationMs", (System.nanoTime() - t0) / 1_000_000
         ));
-        jobService.enqueue(media.getId(), JobType.DETECT, Map.of(
+        jobService.enqueue(media.getId(), DETECT, Map.of(
                 "lang", res.lang(),
                 "provider", res.provider()
         ));
@@ -166,78 +176,7 @@ void handleTranscribe(Job job) {
         return s.length() > 2000 ? s.substring(0, 2000) + "…(truncated)" : s;
     }
 
-    @Transactional
-    void handleDetect(Job job) throws Exception {
-        var media = mediaRepo.findById(job.getMedia().getId()).orElseThrow();
-        //1) Transcript kiezen payload > latest by createdAt
-        Optional<Transcript> trOpt = Optional.empty();
 
-        String lang = (String) job.getPayload().getOrDefault("lang", null);
-        String provider = (String) job.getPayload().getOrDefault("provider", null);
-
-        if(lang != null && provider != null) {
-            trOpt = transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider);
-        } else {
-            trOpt = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
-        }
-        if (trOpt.isEmpty()) {
-            LOGGER.warn("No transcript for media {}. Enqueue TRANSCRIBE and skip DETECT.", media.getId());
-            jobService.markError(job.getId(), "No transcript", Map.of());
-            jobService.enqueue(media.getId(), JobType.TRANSCRIBE, Map.of());
-            return;
-        }
-        var tr = trOpt.get();
-
-        var srcPath = storage.resolveRaw(media.getObjectKey());
-        var params = DetectionParams.defaults().withMaxCandidates(8);
-        Object sceneThresholdValue = job.getPayload().get("sceneThreshold");
-        Double sceneTh = null;
-        if (sceneThresholdValue instanceof Number number) {
-            sceneTh = number.doubleValue();
-        } else if (sceneThresholdValue != null) {
-            try {
-                sceneTh = Double.parseDouble(sceneThresholdValue.toString());
-            } catch (NumberFormatException ignored) {
-                LOGGER.warn("Invalid sceneThreshold payload value: {}", sceneThresholdValue);
-            }
-        }
-        if (sceneTh != null && sceneTh > 0) {
-            params = new DetectionParams(
-                    params.minDurationMs(), params.maxDurationMs(), params.maxCandidates(),
-                    params.silenceNoiseDb(), params.silenceMinDurSec(), params.snapThresholdMs(),
-                    params.targetLenSec(), params.lenSigmaSec(), sceneTh, params.snapSceneMs(), params.sceneAlignBonus()
-            );
-        }
-        long T0 = System.nanoTime();
-        var detected = detection.detect(srcPath, tr, params);
-
-        long pad = 500;
-        List<SegmentDTO> refined = new ArrayList<>(detected.size());
-        for (var s : detected) {
-            var win = audioWindowService.sliceToTempWav(srcPath, s.startMs(), s.endMs(), pad);
-            var fw = fastWhisperClient.transcribeFile(win.file(), true);
-            var snapped = snapToWordBounds(s, fw, win.offsetMs());
-            refined.add(snapped);
-            try { Files.deleteIfExists(win.file()); } catch (Exception ignore) {}
-        }
-
-        // 4) Idempotent wegschrijven
-        segmentRepo.deleteByMedia(media);
-        if(!refined.isEmpty()) {
-            var toSave = new ArrayList<Segment>(refined.size());
-            // save batch
-            for(var s : refined) {
-                var seg = new Segment(media, s.startMs(), s.endMs());
-                seg.setScore(s.score());
-                seg.setMeta(s.meta());
-                toSave.add(seg);
-            }
-            segmentRepo.saveAll(toSave);
-        }
-
-
-        jobService.markDone(job.getId(), Map.of("segmentCount", refined.size()));
-    }
 
     @Transactional
       void handleClip(Job job) throws Exception {
@@ -249,7 +188,7 @@ void handleTranscribe(Job job) {
 
             // subtitles (optioneel)
 
-            var tr = transcriptRepo.findByMediaAndLangAndProvider(media, "en", "openai").orElse(null);
+            var tr = transcriptRepo.findByMediaAndLangAndProvider(media).orElse(null);
             SubtitleFiles subs = null;
             if (tr != null) {
                 subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());

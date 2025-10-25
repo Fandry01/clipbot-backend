@@ -33,21 +33,30 @@ public class FasterWhisperTranscriptionEngine implements TranscriptionEngine {
         FwVerboseResponse resp = client.transcribeFile(input, true);
 
         List<Word> words = new ArrayList<>();
-        if (resp != null && resp.segments() != null) {
-            for (var s : resp.segments()) {
-                if (s.words() == null) continue;
-                for (var w : s.words()) {
-                    long startMs = w.start() == null ? 0L : Math.round(w.start() * 1000);
-                    long endMs   = w.end()   == null ? startMs : Math.round(w.end() * 1000);
-                    words.add(new Word(startMs, endMs, w.word()));
+        if (resp != null) {
+            if (resp.words() != null && !resp.words().isEmpty()) {
+                for (var w : resp.words()) {
+                    long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
+                    long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
+                    words.add(new Word(s, e, safeTrim(w.word())));
+                }
+            } else if (resp.segments() != null) {
+                for (var seg : resp.segments()) {
+                    if (seg.words() == null) continue;
+                    for (var w : seg.words()) {
+                        long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
+                        long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
+                        words.add(new Word(s, e, safeTrim(w.word())));
+                    }
                 }
             }
         }
+        String lang = (resp != null && resp.language() != null && !resp.language().isBlank())
+                ? resp.language() : (req.langHint() == null ? "auto" : req.langHint());
         String text = resp == null || resp.text() == null ? "" : resp.text();
 
-        return new Result(text, words,
-                req.langHint() == null ? "auto" : req.langHint(),
-                "FW",
+        return new Result(text, words, lang, "FW",
                 Map.of("source","faster-whisper","schema","verbose_json"));
     }
+    private static String safeTrim(String s){ return s==null ? "" : s.trim(); }
 }

@@ -54,7 +54,7 @@ public class Media {
     private Integer speakerCountDetected;
 
     @Enumerated(EnumType.STRING)
-    private SpeakerMode speakerMode;
+    private SpeakerMode speakerMode = AUTO;
 
     public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, LocalDate createdAt) {
         this.id = id;
