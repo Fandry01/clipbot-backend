@@ -80,7 +80,7 @@ public class DetectionService {
 
     private Transcript resolveTranscript(Media media, String lang, String provider) {
         if (lang != null && provider != null) {
-            return transcriptRepo.findByMediaAndLangAndProvider(media).orElse(null);
+            return transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai").orElse(null);
         }
         return transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
     }

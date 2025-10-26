@@ -41,6 +41,7 @@ public class WorkerService {
     private final FasterWhisperClient fastWhisperClient;
     private final AudioWindowService audioWindowService;
     private final DetectWorkflow detectWorkflow;
+    private final ClipWorkFlow clipWorkFlow;
 
     // engines
      TranscriptionEngine gptDiarizeEngine;
@@ -51,7 +52,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -63,6 +64,7 @@ public class WorkerService {
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
         this.detectWorkflow = detectWorkflow;
+        this.clipWorkFlow = clipWorkFlow;
         this.detection = detection;
         this.renderEngine = renderEngine;
         this.storage = storage;
@@ -83,7 +85,16 @@ public class WorkerService {
                         jobService.markDone(job.getId(), Map.of("segmentCount", count));
                     }
 
-                    case CLIP -> handleClip(job);
+                    case CLIP -> {
+                        try {
+                            var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
+                            clipWorkFlow.run(clipId); // aparte bean → @Transactional actief
+                            jobService.markDone(job.getId(), Map.of("clipId", clipId.toString()));
+                        } catch (Exception e) {
+                            LOGGER.error("CLIP {} failed: {}", job.getId(), e.toString(), e);
+                            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+                        }
+                    }
 
                     default -> LOGGER.warn("Unhandeld job type {}", job.getType());
                 }
@@ -188,7 +199,7 @@ void handleTranscribe(Job job) {
 
             // subtitles (optioneel)
 
-            var tr = transcriptRepo.findByMediaAndLangAndProvider(media).orElse(null);
+            var tr = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
             SubtitleFiles subs = null;
             if (tr != null) {
                 subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());

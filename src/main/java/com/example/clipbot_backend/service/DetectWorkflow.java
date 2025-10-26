@@ -48,7 +48,7 @@ public class DetectWorkflow {
 
         Optional<Transcript> trOpt =
                 (lang != null && provider != null)
-                        ? transcriptRepo.findByMediaAndLangAndProvider(media)
+                        ? transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai")
                         : transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
 
         if (trOpt.isEmpty()) {

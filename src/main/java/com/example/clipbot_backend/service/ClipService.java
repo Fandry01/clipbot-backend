@@ -6,10 +6,13 @@ import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.util.ClipStatus;
+import com.example.clipbot_backend.util.JobType;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -74,7 +77,13 @@ public class ClipService {
         return clipRepo.findByMediaOrderByCreatedAtDesc(media, pageable);
     }
     public Clip get(UUID clipId) {
-        return clipRepo.findById(clipId).orElseThrow();
+        return clipRepo.findById(clipId).orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
+    }
+    public UUID enqueueRender(JobService jobService, UUID clipId) {
+        var clip = get(clipId);
+        var jobId = jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
+        return jobId;
     }
 
 

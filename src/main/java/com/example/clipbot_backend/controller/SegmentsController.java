@@ -12,7 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -38,21 +40,29 @@ public class SegmentsController {
     }
 
     @GetMapping("/media/{mediaId}")
-    public Page<Segment> listByMedia(@PathVariable UUID mediaId,
-                                     @RequestParam(defaultValue = "0") int page,
-                                     @RequestParam(defaultValue = "10") int size) {
-        return segmentService.list(mediaId, PageRequest.of(page, size));
+    public Page<Map<String,Object>> listByMedia(@PathVariable UUID mediaId,
+                                                @RequestParam(defaultValue = "0") int page,
+                                                @RequestParam(defaultValue = "10") int size) {
+        return segmentService.list(mediaId, PageRequest.of(page, size)).map(SegmentsController::toDto);
     }
 
     @GetMapping("/media/{mediaId}/top")
-    public List<Segment> topByScore(@PathVariable UUID mediaId,
+    public List<Map<String,Object>> topByScore(@PathVariable UUID mediaId,
                                     @RequestParam(defaultValue = "5") @Min(1) int limit) {
-        return segmentService.topByScore(mediaId, limit);
+        return segmentService.topByScore(mediaId, limit).stream().map(SegmentsController::toDto).toList();
     }
 
     @DeleteMapping("/media/{mediaId}")
     public void deleteByMedia(@PathVariable UUID mediaId) {
         segmentService.deleteByMedia(mediaId);
     }
-
+    private static Map<String,Object> toDto(Segment s){
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("id", s.getId());
+        m.put("startMs", s.getStartMs());
+        m.put("endMs", s.getEndMs());
+        m.put("score", s.getScore());
+        m.put("meta", s.getMeta());
+        return m;
+    }
 }

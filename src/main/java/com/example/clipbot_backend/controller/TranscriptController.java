@@ -42,7 +42,7 @@ public class TranscriptController {
                                         @RequestParam String provider) {
         Media media = mediaRepo.findById(mediaId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Media not found: " + mediaId));
-        Transcript t = transcriptRepo.findByMediaAndLangAndProvider(media)
+        Transcript t = transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai")
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Transcript not found for media=" + mediaId + ", lang=" + lang + ", provider=" + provider));
         return toDto(t);

@@ -9,9 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 @Qualifier("fasterWhisperEngine")
@@ -51,9 +49,13 @@ public class FasterWhisperTranscriptionEngine implements TranscriptionEngine {
                 }
             }
         }
+        words.sort(Comparator.comparingLong(Word::startMs));
+
         String lang = (resp != null && resp.language() != null && !resp.language().isBlank())
-                ? resp.language() : (req.langHint() == null ? "auto" : req.langHint());
-        String text = resp == null || resp.text() == null ? "" : resp.text();
+                ? resp.language().toLowerCase(Locale.ROOT) :
+                (req.langHint() == null ? "auto" : req.langHint().toLowerCase(Locale.ROOT));
+
+        String text = resp == null || resp.text() == null ? "" : resp.text().strip();
 
         return new Result(text, words, lang, "FW",
                 Map.of("source","faster-whisper","schema","verbose_json"));

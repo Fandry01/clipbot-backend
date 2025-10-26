@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.controller;
 
+import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ClipCustomRequest;
 import com.example.clipbot_backend.dto.web.ClipFromSegmentRequest;
 import com.example.clipbot_backend.dto.web.EnqueueRenderRequest;
@@ -30,30 +31,34 @@ public class ClipController {
     public UUID createFromSegment(@Valid @RequestBody ClipFromSegmentRequest request) {
         return clipService.createFromSegment(request.mediaId(), request.segmentId(), request.title(), request.meta());
     }
+
     @PostMapping("/custom")
     public UUID createCustom(@Valid @RequestBody ClipCustomRequest request) {
         return clipService.createCustom(request.mediaId(), request.startMs(), request.endMs(), request.title(), request.meta());
     }
 
     @GetMapping("/{id}")
-    public Object get(@PathVariable UUID id) { return clipService.get(id); }
-
-    @GetMapping("/media/{mediaId}")
-    public Page<?> listByMedia(@PathVariable UUID mediaId,
-                               @RequestParam(defaultValue = "0") int page,
-                               @RequestParam(defaultValue = "10") int size) {
-        return clipService.listByMedia(mediaId, PageRequest.of(page, size));
+    public ClipResponse get(@PathVariable UUID id) {
+        return ClipResponse.from(clipService.get(id));
     }
 
-    // Render-job enqueuen (CLIP)
+    @GetMapping("/media/{mediaId}")
+    public Page<ClipResponse> listByMedia(@PathVariable UUID mediaId,
+                                          @RequestParam(defaultValue = "0") int page,
+                                          @RequestParam(defaultValue = "10") int size) {
+        var entities = clipService.listByMedia(mediaId, PageRequest.of(page, size));
+        return entities.map(ClipResponse::from);
+    }
+
+    // Render-job enqueuen (CLIP) — geef juiste mediaId mee via de clip
     @PostMapping("/enqueue-render")
     public UUID enqueueRender(@Valid @RequestBody EnqueueRenderRequest request) {
-        return jobService.enqueue(null, JobType.CLIP, Map.of("clipId", request.clipId().toString()));
+        // retourneer desnoods jobId; hier doen we dat.
+        return clipService.enqueueRender(jobService, request.clipId());
     }
 
     @PostMapping("/{id}/status/{status}")
     public void setStatus(@PathVariable UUID id, @PathVariable ClipStatus status) {
         clipService.setStatus(id, status);
     }
-
 }
