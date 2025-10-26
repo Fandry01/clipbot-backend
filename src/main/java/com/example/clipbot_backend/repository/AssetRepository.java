@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AssetRepository extends JpaRepository<Asset, UUID> {
@@ -16,4 +17,9 @@ public interface AssetRepository extends JpaRepository<Asset, UUID> {
     Page<Asset> findByRelatedClipOrderByCreatedAtDesc(Clip clip, Pageable pageable);
     Page<Asset> findByRelatedMediaOrderByCreatedAtDesc(Media media, Pageable pageable);
     Page<Asset> findByOwnerAndKindOrderByCreatedAtDesc(Account owner, AssetKind kind, Pageable pageable);
+    Optional<Asset> findTopByRelatedClipAndKindOrderByCreatedAtDesc(Clip clip, AssetKind kind);
+    Optional<Asset> findTopByRelatedMediaAndKindOrderByCreatedAtDesc(Media media, AssetKind kind);
+    Page<Asset> findByRelatedClipAndKindOrderByCreatedAtDesc(Clip clip, AssetKind kind, Pageable pageable);
+    Page<Asset> findByRelatedMediaAndKindOrderByCreatedAtDesc(Media media, AssetKind kind, Pageable pageable);
+
 }

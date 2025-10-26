@@ -210,13 +210,32 @@ void handleTranscribe(Job job) {
 
             // Registreer Assets
             var owner = media.getOwner();
-            assetRepo.save(new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size()));
-            if(res.thumbKey() != null) assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
+            Asset mp4 = new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size());
+            mp4.setRelatedMedia(media);
+            mp4.setRelatedClip(clip);
+            assetRepo.save(mp4);
 
-            if(subs != null){
-                if(subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT,subs.srtKey(), subs.srtSize()));
-                if(subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize()));
+            if (res.thumbKey() != null) {
+                Asset thumb = new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize());
+                thumb.setRelatedMedia(media);
+                thumb.setRelatedClip(clip);
+                assetRepo.save(thumb);
             }
+
+        if (subs != null) {
+            if (subs.srtKey() != null) {
+                Asset srt = new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), subs.srtSize());
+                srt.setRelatedMedia(media);
+                srt.setRelatedClip(clip);
+                assetRepo.save(srt);
+            }
+            if (subs.vttKey() != null) {
+                Asset vtt = new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize());
+                vtt.setRelatedMedia(media);
+                vtt.setRelatedClip(clip);
+                assetRepo.save(vtt);
+            }
+        }
 
             // update clip
             clip.setCaptionSrtKey(subs != null ? subs.srtKey() : null);
