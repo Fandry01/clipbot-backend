@@ -27,19 +27,29 @@ public class WebSecurityConfig {
         return http.build();
     }
 
+
     @Bean
     CorsConfigurationSource corsConfig() {
         CorsConfiguration c = new CorsConfiguration();
-        c.setAllowedOrigins(List.of("*")); // zet specifiek domein in prod
+        c.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "http://localhost:3000"
+        ));
         c.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
-        c.setAllowedHeaders(List.of("Authorization","Content-Type","Accept","Origin","X-Requested-With"));
-        c.setExposedHeaders(List.of("Location","Content-Disposition"));
-        c.setAllowCredentials(false); // zet true met specifieke origin
+        c.setAllowedHeaders(List.of(
+                "Authorization","Content-Type","Accept","Origin","X-Requested-With",
+                "Range","If-Range"
+        ));
+        c.setExposedHeaders(List.of(
+                "Accept-Ranges","Content-Range","Content-Length","Content-Disposition","Location"
+        ));
+        c.setAllowCredentials(false); // zet true als je cookies/tokens via browser meegeeft
         c.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", c);
         return source;
     }
+
 
 }

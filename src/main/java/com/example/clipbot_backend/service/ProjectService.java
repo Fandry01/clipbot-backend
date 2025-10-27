@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ProjectCreateRequest;
 import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Clip;
@@ -111,19 +112,24 @@ public class ProjectService {
 
     /* ---------- CLIPS ---------- */
 
-    public Page<Clip> listProjectClips(UUID projectId, UUID ownerId, ClipStatus status, Pageable pageable) {
+    public Page<ClipResponse> listProjectClips(UUID projectId,
+                                               UUID ownerId,
+                                               ClipStatus status,
+                                               Pageable pageable) {
         var owner = accountService.getByIdOrThrow(ownerId);
         var project = ensureProjectOwnedBy(projectId, owner);
 
-        // MVP: eerst media → dan clips
         var mediaList = projectMediaRepository.findMediaByProject(project);
         if (mediaList.isEmpty()) return Page.empty(pageable);
 
-        if (status != null) {
-            return clipRepository.findByMediaInAndStatusOrderByCreatedAtDesc(mediaList, status, pageable);
-        }
-        return clipRepository.findByMediaInOrderByCreatedAtDesc(mediaList, pageable);
+        Page<Clip> page = (status != null)
+                ? clipRepository.findByMediaInAndStatusOrderByCreatedAtDesc(mediaList, status, pageable)
+                : clipRepository.findByMediaInOrderByCreatedAtDesc(mediaList, pageable);
+
+        // ✅ map naar DTO -> geen Hibernate proxy serialization meer
+        return page.map(ClipResponse::from);
     }
+
 
     /* ---------- HELPERS ---------- */
 

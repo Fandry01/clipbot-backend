@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.controller;
 
+import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ProjectCreateRequest;
 import com.example.clipbot_backend.dto.web.ProjectMediaLinkRequest;
 import com.example.clipbot_backend.model.Clip;
@@ -98,7 +99,7 @@ public class ProjectController {
 
     // Ondersteunt filters + owner bridging
     @GetMapping("/{projectId}/clips")
-    public Page<Clip> listClips(
+    public Page<ClipResponse> listClips(
             @PathVariable UUID projectId,
             @RequestParam(required = false) UUID ownerId,
             @RequestParam(required = false) String ownerExternalSubject,

@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.repository.ClipRepository;

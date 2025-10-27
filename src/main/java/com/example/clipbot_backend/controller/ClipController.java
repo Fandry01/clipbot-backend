@@ -4,6 +4,7 @@ import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ClipCustomRequest;
 import com.example.clipbot_backend.dto.web.ClipFromSegmentRequest;
 import com.example.clipbot_backend.dto.web.EnqueueRenderRequest;
+import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.service.ClipService;
 import com.example.clipbot_backend.service.JobService;
 import com.example.clipbot_backend.util.ClipStatus;
@@ -44,8 +45,8 @@ public class ClipController {
 
     @GetMapping("/media/{mediaId}")
     public Page<ClipResponse> listByMedia(@PathVariable UUID mediaId,
-                                          @RequestParam(defaultValue = "0") int page,
-                                          @RequestParam(defaultValue = "10") int size) {
+                                  @RequestParam(defaultValue = "0") int page,
+                                  @RequestParam(defaultValue = "10") int size) {
         var entities = clipService.listByMedia(mediaId, PageRequest.of(page, size));
         return entities.map(ClipResponse::from);
     }
