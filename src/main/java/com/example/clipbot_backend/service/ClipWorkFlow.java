@@ -7,6 +7,7 @@ import com.example.clipbot_backend.model.*;
 
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.ClipRepository;
+import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
@@ -27,19 +28,21 @@ public class ClipWorkFlow {
     private final ClipRenderEngine renderEngine;
     private final AssetRepository assetRepo;
     private final SubtitleService subtitles;
+    private final MediaRepository mediaRepo;
 
     public ClipWorkFlow(ClipRepository clipRepo,
                         TranscriptRepository transcriptRepo,
                         StorageService storage,
                         ClipRenderEngine renderEngine,
                         AssetRepository assetRepo,
-                        SubtitleService subtitles) {
+                        SubtitleService subtitles, MediaRepository mediaRepo) {
         this.clipRepo = clipRepo;
         this.transcriptRepo = transcriptRepo;
         this.storage = storage;
         this.renderEngine = renderEngine;
         this.assetRepo = assetRepo;
         this.subtitles = subtitles;
+        this.mediaRepo = mediaRepo;
     }
 
     @Transactional
@@ -63,14 +66,29 @@ public class ClipWorkFlow {
         var res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
 
         // 5) Assets registreren
+        var clipRef  = clipRepo.getReferenceById(clip.getId());
+        var mediaRef = mediaRepo.getReferenceById(media.getId());
         Account owner = media.getOwner();
-        assetRepo.save(new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size()));
+        Asset mp4 = new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size());
+        mp4.setRelatedClip(clipRef);
+        mp4.setRelatedMedia(mediaRef);
+        assetRepo.save(mp4);
         if (res.thumbKey() != null) {
             assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
         }
         if (subs != null) {
-            if (subs.srtKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), subs.srtSize()));
-            if (subs.vttKey() != null) assetRepo.save(new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize()));
+            if (subs.srtKey() != null) {
+                Asset srt = new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), subs.srtSize());
+                srt.setRelatedClip(clipRef);
+                srt.setRelatedMedia(mediaRef);
+                assetRepo.saveAndFlush(srt);
+            }
+            if (subs.vttKey() != null) {
+                Asset vtt = new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize());
+                vtt.setRelatedClip(clipRef);
+                vtt.setRelatedMedia(mediaRef);
+                assetRepo.saveAndFlush(vtt);
+            }
         }
 
         // 6) Clip bijwerken

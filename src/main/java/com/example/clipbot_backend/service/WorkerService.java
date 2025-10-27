@@ -10,7 +10,6 @@ import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.MediaStatus;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
@@ -20,7 +19,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
