@@ -42,46 +42,52 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     }
 
     @Override
-    public RenderResult render (Path inputFile, long startMs, long endMs, RenderOptions options) throws IOException, InterruptedException {
-        if(inputFile == null || !Files.exists(inputFile)) {
+    public RenderResult render(Path inputFile, long startMs, long endMs, RenderOptions options) throws IOException, InterruptedException {
+        if (inputFile == null || !Files.exists(inputFile)) {
             throw new IllegalArgumentException("Input file not found: " + inputFile);
         }
-        if(startMs < 0 || endMs <= startMs) {
+        if (startMs < 0 || endMs <= startMs) {
             throw new IllegalArgumentException("Invalid range: startMs=" + startMs + ", endMs=" + endMs);
         }
-        // ===== 1) Lees spec + overschrijf met profile + meta =====
+
+        // ===== 1) Spec + overrides =====
         RenderSpec spec = options != null ? options.spec() : null;
-        if(spec != null && notBlank(spec.profile())){
-            spec  = applyProfile(spec); // vult ontbrekende velden uit profiel
+        if (spec != null && notBlank(spec.profile())) {
+            spec = applyProfile(spec);
         }
-
         Map<String, Object> meta = options != null ? options.meta() : null;
-        Integer width = firstNonNull(asInt(getOrNull(spec, "width")), asInt(meta, "width"));
-        Integer height  = firstNonNull(asInt(getOrNull(spec, "height")),  asInt(meta, "height"));
-        Integer fps     = firstNonNull(asInt(getOrNull(spec, "fps")),     asInt(meta, "fps"));
-        Integer crf     = firstNonNull(asInt(getOrNull(spec, "crf")),     asInt(meta, "crf"));
-        String  preset  = firstNonNull(asStr(getOrNull(spec, "preset")),  asStr(meta, "preset"));
-        Integer thumbAt = firstNonNull(1, asInt(meta, "thumbnailAt")); // default 1s
 
-        // ===== 2) Bouw ffmpeg command =====
+        Integer width  = firstNonNull(asInt(getOrNull(spec, "width")),  asInt(meta, "width"));
+        Integer height = firstNonNull(asInt(getOrNull(spec, "height")), asInt(meta, "height"));
+        Integer fps    = firstNonNull(asInt(getOrNull(spec, "fps")),    asInt(meta, "fps"));
+        Integer crf    = firstNonNull(asInt(getOrNull(spec, "crf")),    asInt(meta, "crf"));
+        String  preset = firstNonNull(asStr(getOrNull(spec, "preset")), asStr(meta, "preset"));
+
+        long   durMs     = endMs - startMs;
+        double durSec    = durMs / 1000.0;
+        // default = midden; mag via meta.thumbnailAt (sec) overschreven worden, maar clamp binnen [0.2s, dur-0.2s]
+        Double metaThumb = asDbl(meta, "thumbnailAt"); // seconden, optioneel
+        double thumbAtSec = metaThumb != null ? metaThumb : (durSec / 2.0);
+        thumbAtSec = Math.max(0.2, Math.min(thumbAtSec, Math.max(0.2, durSec - 0.2)));
+
+        // ===== 2) Bouw ffmpeg (clip) =====
         String outName = "clip-" + UUID.randomUUID() + ".mp4";
-        Path tmpOut = workDir.resolve(outName);
+        Path   tmpOut  = workDir.resolve(outName);
 
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegBin);
         cmd.add("-y");
-        cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
+        cmd.add("-ss"); cmd.add(String.format(java.util.Locale.ROOT, "%.3f", startMs / 1000.0));
         cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());
-        cmd.add("-t");  cmd.add(String.format("%.3f", (endMs - startMs) / 1000.0));
+        cmd.add("-t");  cmd.add(String.format(java.util.Locale.ROOT, "%.3f", durSec));
 
-        // Video encode
+        // Video
         cmd.add("-c:v"); cmd.add("libx264");
         if (notBlank(preset)) { cmd.add("-preset"); cmd.add(preset); }
         if (crf != null)      { cmd.add("-crf");    cmd.add(String.valueOf(crf)); }
         if (fps != null)      { cmd.add("-r");      cmd.add(String.valueOf(fps)); }
 
         String vf = null;
-
         SubtitleFiles subs = options != null ? options.subtitles() : null;
         if (subs != null && notBlank(subs.srtKey())) {
             Path srtPath = resolveFirstExisting(subs.srtKey());
@@ -91,21 +97,20 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 LOGGER.warn("SRT not found for burn-in: {}", subs.srtKey());
             }
         }
-
         if (width != null && height != null) {
             vf = appendFilter(vf, "scale=" + width + ":" + height);
         }
         if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
 
-        // Audio encode
+        // Audio
         cmd.add("-c:a"); cmd.add("aac");
         cmd.add("-b:a"); cmd.add("128k");
 
         cmd.add(tmpOut.toAbsolutePath().toString());
 
-       LOGGER.info("FFmpeg command: {}", String.join(" ", cmd));
+        LOGGER.info("FFmpeg command: {}", String.join(" ", cmd));
 
-        // ===== 3) Run ffmpeg =====
+        // ===== 3) Run ffmpeg (clip) =====
         ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
         Process p = pb.start();
         Thread logThread = new Thread(() -> {
@@ -124,35 +129,40 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         if (p.exitValue() != 0) {
             throw new RuntimeException("ffmpeg failed with exit " + p.exitValue());
         }
+
+        // ===== 4) Upload clip =====
         String mp4Key = "clips/" + outName;
         storageService.uploadToOut(tmpOut, mp4Key);
         long mp4Size = Files.size(tmpOut);
-        try { Files.deleteIfExists(tmpOut); } catch (Exception ignore) {}
 
+        // ===== 5) Thumbnail uit de GERENDERDE clip (correcte moment en met subs/scale) =====
         String thumbKey = null;
         long   thumbSize = 0L;
-        if (thumbAt != null && thumbAt >= 0) {
-            try {
-                Path thumb = workDir.resolve(outName.replace(".mp4", ".jpg"));
-                List<String> tcmd = List.of(
-                        ffmpegBin, "-y",
-                        "-ss", String.valueOf(thumbAt),
-                        "-i", inputFile.toAbsolutePath().toString(),
-                        "-vframes", "1",
-                        "-q:v", "3",
-                        thumb.toAbsolutePath().toString()
-                );
-                Process tp = new ProcessBuilder(tcmd).redirectErrorStream(true).start();
-                tp.waitFor();
-                if (Files.exists(thumb)) {
-                    thumbKey = "clips/thumbs/" + thumb.getFileName();
-                    storageService.uploadToOut(thumb, thumbKey);
-                    thumbSize = Files.size(thumb);
-                    Files.deleteIfExists(thumb);
-                }
-            } catch (Exception e) {
-                LOGGER.warn("thumbnail generation failed: {}", e.toString());
+        try {
+            Path thumb = workDir.resolve(outName.replace(".mp4", ".jpg"));
+            List<String> tcmd = List.of(
+                    ffmpegBin, "-y",
+                    "-ss", String.format(java.util.Locale.ROOT, "%.3f", thumbAtSec),
+                    "-i", tmpOut.toAbsolutePath().toString(), // ← uit gerenderde clip
+                    "-frames:v", "1",
+                    "-vf", "scale=640:-1",
+                    "-q:v", "3",
+                    thumb.toAbsolutePath().toString()
+            );
+            Process tp = new ProcessBuilder(tcmd).redirectErrorStream(true).start();
+            tp.waitFor();
+
+            if (Files.exists(thumb)) {
+                thumbKey = "clips/thumbs/" + thumb.getFileName(); // bv. clips/thumbs/clip-xxxx.jpg
+                storageService.uploadToOut(thumb, thumbKey);
+                thumbSize = Files.size(thumb);
+                Files.deleteIfExists(thumb);
             }
+        } catch (Exception e) {
+            LOGGER.warn("thumbnail generation failed: {}", e.toString());
+        } finally {
+            // tmpOut pas hier opruimen
+            try { Files.deleteIfExists(tmpOut); } catch (Exception ignore) {}
         }
 
         return new RenderResult(mp4Key, mp4Size, thumbKey, thumbSize);
@@ -224,6 +234,19 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     /** Eenvoudige escape voor ffmpeg subtitles filter. */
     private static String escapeForFilter(String path) {
         return path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'");
+    }
+    @SuppressWarnings("unchecked")
+    static Double asDbl(Map<String, Object> meta, String key) {
+        if (meta == null) return null;
+        Object v = meta.get(key);
+        if (v == null) return null;
+        if (v instanceof Number n) return n.doubleValue();
+        if (v instanceof CharSequence s) {
+            String txt = s.toString().trim();
+            if (txt.isEmpty()) return null;
+            try { return Double.parseDouble(txt); } catch (NumberFormatException ignore) {}
+        }
+        return null;
     }
 
     }

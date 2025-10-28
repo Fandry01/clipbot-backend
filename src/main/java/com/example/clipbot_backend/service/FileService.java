@@ -23,7 +23,9 @@ public class FileService {
         this.storage = storage;
     }
     /** Streamt bestanden uit "out" (clips/subs/thumbs) met byte-range (seek). */
-    public ResponseEntity<Resource> streamOut(String objectKey, String rangeHeader) throws IOException {
+    public ResponseEntity<Resource> streamOut(String objectKey,
+                                              String rangeHeader,
+                                              boolean download) throws IOException {
         Path file = storage.resolveOut(objectKey);
         if (!Files.exists(file)) throw notFound("out", objectKey);
         assertInside(storage.resolveOut(""), file);
@@ -32,18 +34,23 @@ public class FileService {
         FileSystemResource resource = new FileSystemResource(file);
         long length = resource.contentLength();
 
+        var disp = (download ? "attachment" : "inline") + "; filename=" + file.getFileName();
+        var cacheCtl = CacheControl.maxAge(java.time.Duration.ofHours(1)).cachePublic();
+
         if (rangeHeader == null || rangeHeader.isBlank()) {
+            // 200 OK (volledig)
             return ResponseEntity.ok()
+                    .cacheControl(cacheCtl)
                     .contentType(contentType)
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, inline(file))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disp)
                     .contentLength(length)
                     .body(resource);
         }
 
         // 206 Partial Content
-        List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
-        HttpRange r = ranges.get(0);
+        var ranges = HttpRange.parseRanges(rangeHeader);
+        var r = ranges.get(0);
         long start = r.getRangeStart(length);
         long end   = r.getRangeEnd(length);
         if (end < start) end = length - 1;
@@ -57,13 +64,15 @@ public class FileService {
         };
 
         return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
+                .cacheControl(cacheCtl)
                 .contentType(contentType)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + length)
-                .header(HttpHeaders.CONTENT_DISPOSITION, inline(file))
+                .header(HttpHeaders.CONTENT_DISPOSITION, disp)
                 .contentLength(rangeLen)
                 .body(slice);
     }
+
     public ResponseEntity<FileSystemResource> downloadOut(String objectKey) throws IOException {
         Path file = storage.resolveOut(objectKey);
         if (!Files.exists(file)) throw notFound("out", objectKey);

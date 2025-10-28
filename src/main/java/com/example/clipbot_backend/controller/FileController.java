@@ -3,6 +3,7 @@ package com.example.clipbot_backend.controller;
 import com.example.clipbot_backend.service.FileService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,11 +23,16 @@ public class FileController {
     }
 
     @GetMapping("/out/**")
-    public ResponseEntity<Resource> streamOut(HttpServletRequest req,
-                                              @RequestHeader(name = "Range", required = false) String rangeHeader)
-            throws IOException {
-        String objectKey = tail(req, "/v1/files/out/");
-        return files.streamOut(objectKey, rangeHeader);
+    public ResponseEntity<Resource> getOut(
+            HttpServletRequest req,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String range,
+            @RequestParam(value = "download", required = false) Integer download
+    ) throws IOException {
+        String prefix = "/v1/files/out/";
+        String uri = req.getRequestURI();
+        String objectKey = uri.substring(uri.indexOf(prefix) + prefix.length());
+        boolean asDownload = (download != null && download == 1);
+        return files.streamOut(objectKey, range, asDownload);
     }
 
     @GetMapping("/download/out/**")

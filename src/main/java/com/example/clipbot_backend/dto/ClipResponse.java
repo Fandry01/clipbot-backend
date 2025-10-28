@@ -1,6 +1,9 @@
 package com.example.clipbot_backend.dto;
 
 import com.example.clipbot_backend.model.Clip;
+import com.example.clipbot_backend.repository.AssetRepository;
+import com.example.clipbot_backend.util.AssetKind;
+import com.example.clipbot_backend.util.AssetUrlBuilder;
 
 import java.time.Instant;
 import java.util.Map;
@@ -16,9 +19,13 @@ public record ClipResponse(
         String status,
         String captionSrtKey,
         String captionVttKey,
+        String thumbUrl,
+        String mp4url,
         Instant createdAt
 ) {
-    public static ClipResponse from(Clip c) {
+    public static ClipResponse from(Clip c, AssetRepository assetRepo) {
+        var thumb = assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.THUMBNAIL).orElse(null);
+        var mp4   = assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.CLIP_MP4).orElse(null);
         return new ClipResponse(
                 c.getId(),
                 c.getMedia().getId(),
@@ -29,6 +36,8 @@ public record ClipResponse(
                 c.getStatus().name(),
                 c.getCaptionSrtKey(),
                 c.getCaptionVttKey(),
+                thumb != null ? AssetUrlBuilder.out(thumb.getObjectKey()) : null,
+                mp4   != null ? AssetUrlBuilder.out(mp4.getObjectKey())   : null,
                 c.getCreatedAt()
         );
     }
