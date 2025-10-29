@@ -30,8 +30,9 @@ public class DetectWorkflow {
     private final DetectionEngine detection;
     private final FasterWhisperClient fastWhisperClient;
     private final AudioWindowService audioWindowService;
+    private final UrlDownloader urlDownloader;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService) {
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, UrlDownloader urlDownloader) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
@@ -39,6 +40,7 @@ public class DetectWorkflow {
         this.detection = detection;
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
+        this.urlDownloader = urlDownloader;
     }
 
     @Transactional
@@ -56,7 +58,22 @@ public class DetectWorkflow {
 
         // === Nieuw: maak transcript indien ontbreekt ===
         Transcript tr = trOpt.orElseGet(() -> {
-            Path input = storage.resolveRaw(media.getObjectKey());
+            Path input;
+            String key = media.getObjectKey();
+
+            if (key == null || key.isBlank()) {
+                throw new IllegalStateException("media.objectKey invalid: " + key);
+            }
+            String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
+            if ("url".equals(src)) {
+                String external = Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source");
+                input = urlDownloader.ensureRawObject(external, key); // <--- download naar data/raw/<key>
+            } else {
+                input = storage.resolveRaw(key);
+                if (!Files.exists(input)) {
+                    throw new IllegalStateException("raw input missing: " + input);
+                }
+            }
             var fw = fastWhisperClient.transcribeFile(input, true);
 
             String detLang = (fw != null && fw.language() != null && !fw.language().isBlank())
@@ -112,6 +129,9 @@ public class DetectWorkflow {
 
         // === Params
         var srcPath = storage.resolveRaw(media.getObjectKey());
+        if (srcPath== null || !Files.exists(srcPath)) {
+            throw new IllegalStateException("Media file missing: " + srcPath);
+        }
         var params = DetectionParams.defaults().withMaxCandidates(8);
 
         Double sceneTh = parseDouble(payload, "sceneThreshold");

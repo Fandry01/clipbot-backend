@@ -74,7 +74,10 @@ public class ClipWorkFlow {
         mp4.setRelatedMedia(mediaRef);
         assetRepo.save(mp4);
         if (res.thumbKey() != null) {
-            assetRepo.save(new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize()));
+            Asset thumb = new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize());
+            thumb.setRelatedClip(clipRef);      // ← nodig voor /v1/assets/latest/clip
+            thumb.setRelatedMedia(mediaRef);
+            assetRepo.saveAndFlush(thumb);
         }
         if (subs != null) {
             if (subs.srtKey() != null) {

@@ -18,7 +18,7 @@ import java.util.UUID;
 import static org.springframework.http.HttpStatus.ACCEPTED;
 
 @RestController
-@RequestMapping("/api/media/{mediaId}")
+@RequestMapping("/v1/media/{mediaId}")
 public class DetectController {
 private final DetectionService detectionService;
 

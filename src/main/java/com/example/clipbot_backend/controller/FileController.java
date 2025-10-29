@@ -5,9 +5,12 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.servlet.HandlerMapping;
+
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -28,9 +31,12 @@ public class FileController {
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String range,
             @RequestParam(value = "download", required = false) Integer download
     ) throws IOException {
-        String prefix = "/v1/files/out/";
-        String uri = req.getRequestURI();
-        String objectKey = uri.substring(uri.indexOf(prefix) + prefix.length());
+        String pattern = (String) req.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        String path = (String) req.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        String objectKey = new AntPathMatcher().extractPathWithinPattern(pattern, path);
+        if (objectKey == null || objectKey.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
         boolean asDownload = (download != null && download == 1);
         return files.streamOut(objectKey, range, asDownload);
     }

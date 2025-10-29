@@ -79,9 +79,9 @@ public class MediaService  {
         media.setSource((source == null || source.isBlank()) ? "url" : source);
 
         // Status die in je CHECK-constraint toegestaan is
-        media.setStatus(MediaStatus.UPLOADED);
+        media.setStatus(MediaStatus.REGISTERED);
 
-        media.setDurationMs(durationMs);
+        if (durationMs != null && durationMs > 0) media.setDurationMs(durationMs);
 
         // Kies objectKey:
         // - Als caller er al een gaf: neem die.
@@ -89,7 +89,6 @@ public class MediaService  {
         String ok = (objectKeyOverride != null && !objectKeyOverride.isBlank())
                 ? normalizeObjectKey(objectKeyOverride)
                 : buildExternalObjectKey(externalUrl, platform); // geeft pad MET bestandsnaam
-
         media.setObjectKey(ok);
 
         mediaRepo.save(media);

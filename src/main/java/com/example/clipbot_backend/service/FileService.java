@@ -26,6 +26,10 @@ public class FileService {
     public ResponseEntity<Resource> streamOut(String objectKey,
                                               String rangeHeader,
                                               boolean download) throws IOException {
+        if (objectKey == null || objectKey.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
         Path file = storage.resolveOut(objectKey);
         if (!Files.exists(file)) throw notFound("out", objectKey);
         assertInside(storage.resolveOut(""), file);
@@ -101,15 +105,17 @@ public class FileService {
 
     private static MediaType guessType(Path file) throws IOException {
         String name = file.getFileName().toString().toLowerCase();
-        if (name.endsWith(".mp4")) return MediaType.valueOf("video/mp4");
-        if (name.endsWith(".m3u8")) return MediaType.valueOf("application/x-mpegURL");
-        if (name.endsWith(".vtt")) return MediaType.valueOf("text/vtt; charset=utf-8");
-        if (name.endsWith(".srt")) return MediaType.TEXT_PLAIN;
+        if (name.endsWith(".mp4"))  return MediaType.parseMediaType("video/mp4");
+        if (name.endsWith(".m3u8")) return MediaType.parseMediaType("application/vnd.apple.mpegurl");
+        if (name.endsWith(".ts"))   return MediaType.parseMediaType("video/mp2t");
+        if (name.endsWith(".vtt"))  return MediaType.parseMediaType("text/vtt; charset=utf-8");
+        if (name.endsWith(".srt"))  return MediaType.TEXT_PLAIN;
         if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return MediaType.IMAGE_JPEG;
-        if (name.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (name.endsWith(".png"))  return MediaType.IMAGE_PNG;
         String probe = Files.probeContentType(file);
         return MediaType.parseMediaType(probe != null ? probe : "application/octet-stream");
     }
+
 
     private static String inline(Path file) {
         return "inline; filename=\"" + file.getFileName() + "\"";

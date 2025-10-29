@@ -29,7 +29,7 @@ public class UrlDownloader {
                          @Value("${downloader.http.maxRedirects:5}") Integer maxRedirects) {
         this.storage = storage;
         this.ytdlp = ytdlp;
-        this.httpTimeoutMs = httpTimeoutMs;
+        this.httpTimeoutMs = httpTimeoutMs * 1000;
         this.httpUserAgent = httpUserAgent;
         this.maxRedirects = maxRedirects;
     }
@@ -61,7 +61,7 @@ public class UrlDownloader {
             String host = URI.create(url).getHost();
             if (host == null) return false;
             String h = host.toLowerCase(Locale.ROOT);
-            return h.contains("youtube") || "youtu.be".equals(h);
+            return h.contains("youtube.com") || h.endsWith("youtu.be");
         } catch (Exception ignored) {
             return false;
         }
@@ -70,6 +70,8 @@ public class UrlDownloader {
         // Houd je bestaande strategie aan: audio extract naar m4a
         Process p = new ProcessBuilder(
                 ytdlp,
+                "--no-progress",
+                "--newline",
                 "-x", "--audio-format", "m4a",
                 "--no-playlist",
                 "-o", target.toString(),

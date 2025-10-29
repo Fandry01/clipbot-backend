@@ -1,0 +1,7 @@
+ALTER TABLE media DROP CONSTRAINT media_status_check;
+ALTER TABLE media
+ADD CONSTRAINT media_status_check
+CHECK (status IN (
+  'UPLOADED', 'DOWNLOADING', 'PROCESSING', 'READY', 'FAILED',
+  'REGISTERED'   -- nieuw
+));
