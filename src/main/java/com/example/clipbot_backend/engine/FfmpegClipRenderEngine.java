@@ -40,7 +40,17 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             throw new IllegalStateException("Unable to create work directory: " + this.workDir, e);
         }
     }
+    private static boolean probablyAudioOnly(Path file) {
+        try {
+            String ct = java.nio.file.Files.probeContentType(file);
+            if (ct != null && ct.startsWith("audio/")) return true;
+        } catch (Exception ignore) {}
+        // simpele extensie-check als fallback
+        String name = file.getFileName().toString().toLowerCase();
+        return name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".mp3") || name.endsWith(".wav");
+    }
 
+    private static int orDefault(Integer v, int def) { return v != null ? v : def; }
     @Override
     public RenderResult render(Path inputFile, long startMs, long endMs, RenderOptions options) throws IOException, InterruptedException {
         if (inputFile == null || !Files.exists(inputFile)) {
@@ -72,39 +82,100 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
         // ===== 2) Bouw ffmpeg (clip) =====
         String outName = "clip-" + UUID.randomUUID() + ".mp4";
-        Path   tmpOut  = workDir.resolve(outName);
+        Path tmpOut = workDir.resolve(outName);
 
+        // Bepaal of het waarschijnlijk een audio-only bron is
+        boolean audioOnly = probablyAudioOnly(inputFile);
+
+        // Defaults voor canvas / schaal
+        int W = orDefault(width, 1920);
+        int H = orDefault(height, 1080);
+        int FPS = orDefault(fps, 30);
+        int targetCrf = orDefault(crf, 18);
+        String targetPreset = (preset != null && !preset.isBlank()) ? preset : "medium";
+
+        // ---- Command start
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegBin);
         cmd.add("-y");
-        cmd.add("-ss"); cmd.add(String.format(java.util.Locale.ROOT, "%.3f", startMs / 1000.0));
-        cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());
-        cmd.add("-t");  cmd.add(String.format(java.util.Locale.ROOT, "%.3f", durSec));
 
-        // Video
-        cmd.add("-c:v"); cmd.add("libx264");
-        if (notBlank(preset)) { cmd.add("-preset"); cmd.add(preset); }
-        if (crf != null)      { cmd.add("-crf");    cmd.add(String.valueOf(crf)); }
-        if (fps != null)      { cmd.add("-r");      cmd.add(String.valueOf(fps)); }
+
 
         String vf = null;
         SubtitleFiles subs = options != null ? options.subtitles() : null;
-        if (subs != null && notBlank(subs.srtKey())) {
-            Path srtPath = resolveFirstExisting(subs.srtKey());
-            if (srtPath != null) {
-                vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toAbsolutePath().toString()));
-            } else {
-                LOGGER.warn("SRT not found for burn-in: {}", subs.srtKey());
-            }
-        }
-        if (width != null && height != null) {
-            vf = appendFilter(vf, "scale=" + width + ":" + height);
-        }
-        if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
 
-        // Audio
-        cmd.add("-c:a"); cmd.add("aac");
-        cmd.add("-b:a"); cmd.add("128k");
+        if (!audioOnly) {
+            // ======== VIDEO+AUDO BRON ========
+            cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());
+            cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
+
+            // subtitles burn-in (optioneel)
+            if (subs != null && subs.srtKey() != null && !subs.srtKey().isBlank()) {
+                Path srtPath = resolveFirstExisting(subs.srtKey());
+                if (srtPath != null) {
+                    vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toAbsolutePath().toString()));
+                } else {
+                    LOGGER.warn("SRT not found for burn-in: {}", subs.srtKey());
+                }
+            }
+
+            if (width != null && height != null) {
+                vf = appendFilter(vf, "scale=" + width + ":" + height);
+            }
+
+            // Video encode
+            cmd.add("-c:v"); cmd.add("libx264");
+            cmd.add("-preset"); cmd.add(targetPreset);
+            cmd.add("-crf");    cmd.add(String.valueOf(targetCrf));
+            cmd.add("-r");      cmd.add(String.valueOf(FPS));
+
+            if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+
+            // Audio encode
+            cmd.add("-c:a"); cmd.add("aac");
+            cmd.add("-b:a"); cmd.add("128k");
+
+        } else {
+            // ======== AUDIO-ONLY BRON → ZWARTE CANVAS + AUDIO ========
+            // Eerst de canvas als video (input #0)
+            cmd.add("-f");   cmd.add("lavfi");
+            cmd.add("-i");   cmd.add("color=color=black:size=" + W + "x" + H + ":rate=" + FPS);
+
+            // Dan de audio als tweede input (input #1)
+            cmd.add("-i");   cmd.add(inputFile.toAbsolutePath().toString());
+
+            // subtitles burn-in kan hier óók (we hebben nu een video canvas)
+            if (subs != null && subs.srtKey() != null && !subs.srtKey().isBlank()) {
+                Path srtPath = resolveFirstExisting(subs.srtKey());
+                if (srtPath != null) {
+                    vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toAbsolutePath().toString()));
+                }
+            }
+
+            if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+
+            // Kies expliciet mapping: video van input 0 (canvas), audio van input 1 (bron)
+            cmd.add("-map"); cmd.add("0:v:0");
+            cmd.add("-map"); cmd.add("1:a:0?");
+
+            // Encoders
+            cmd.add("-c:v"); cmd.add("libx264");
+            cmd.add("-preset"); cmd.add(targetPreset);
+            cmd.add("-crf");    cmd.add(String.valueOf(targetCrf));
+
+            cmd.add("-c:a"); cmd.add("aac");
+            cmd.add("-b:a"); cmd.add("128k");
+
+            // Stop zodra kortste stream klaar is
+            cmd.add("-shortest");
+        }
+
+        // **** NEW: universele compatibiliteitsflags
+        cmd.add("-t"); cmd.add(String.format("%.3f", (endMs - startMs) / 1000.0));
+
+        cmd.add("-pix_fmt");  cmd.add("yuv420p");
+        cmd.add("-movflags"); cmd.add("+faststart");
+        // **** NEW: einde
 
         cmd.add(tmpOut.toAbsolutePath().toString());
 
@@ -136,6 +207,10 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         long mp4Size = Files.size(tmpOut);
 
         // ===== 5) Thumbnail uit de GERENDERDE clip (correcte moment en met subs/scale) =====
+        double clipDurSec = Math.max(0.001, (endMs - startMs) / 1000.0);
+
+// ... na het renderen van tmpOut (dus ná p.waitFor en exit code check) ...
+
         String thumbKey = null;
         long   thumbSize = 0L;
         try {
@@ -143,17 +218,15 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             List<String> tcmd = List.of(
                     ffmpegBin, "-y",
                     "-ss", String.format(java.util.Locale.ROOT, "%.3f", thumbAtSec),
-                    "-i", tmpOut.toAbsolutePath().toString(), // ← uit gerenderde clip
-                    "-frames:v", "1",
-                    "-vf", "scale=640:-1",
+                    "-i",  tmpOut.toAbsolutePath().toString(),   // uit GERENDERDE MP4 halen
+                    "-vframes", "1",
                     "-q:v", "3",
                     thumb.toAbsolutePath().toString()
             );
             Process tp = new ProcessBuilder(tcmd).redirectErrorStream(true).start();
             tp.waitFor();
-
             if (Files.exists(thumb)) {
-                thumbKey = "clips/thumbs/" + thumb.getFileName(); // bv. clips/thumbs/clip-xxxx.jpg
+                thumbKey = "clips/thumbs/" + thumb.getFileName();
                 storageService.uploadToOut(thumb, thumbKey);
                 thumbSize = Files.size(thumb);
                 Files.deleteIfExists(thumb);

@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.*;
 
 @Service
@@ -38,27 +40,80 @@ public class DetectWorkflow {
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
     }
+
     @Transactional
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
         var media = mediaRepo.findById(mediaId).orElseThrow();
 
-        // 1) Transcript kiezen (payload: lang/provider; anders latest)
-        String lang = payload != null ? (String) payload.get("lang") : null;
+        String lang     = payload != null ? (String) payload.get("lang")     : null;
         String provider = payload != null ? (String) payload.get("provider") : null;
 
         Optional<Transcript> trOpt =
                 (lang != null && provider != null)
-                        ? transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai")
+                        ? transcriptRepo.findByMediaAndLangAndProvider(
+                        media, lang.toLowerCase(Locale.ROOT), provider.toLowerCase(Locale.ROOT))
                         : transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
 
-        if (trOpt.isEmpty()) {
-            throw new IllegalStateException("No transcript for media " + mediaId);
-        }
-        var tr = trOpt.get();
+        // === Nieuw: maak transcript indien ontbreekt ===
+        Transcript tr = trOpt.orElseGet(() -> {
+            Path input = storage.resolveRaw(media.getObjectKey());
+            var fw = fastWhisperClient.transcribeFile(input, true);
 
-        // 2) Params
+            String detLang = (fw != null && fw.language() != null && !fw.language().isBlank())
+                    ? fw.language().toLowerCase(Locale.ROOT)
+                    : (lang == null ? "auto" : lang.toLowerCase(Locale.ROOT));
+
+            String prov = (provider == null || provider.isBlank())
+                    ? "fw" : provider.toLowerCase(Locale.ROOT);
+
+            String text = (fw == null || fw.text() == null) ? "" : fw.text().strip();
+
+            Transcript t = new Transcript(media, detLang, prov);
+            t.setText(text);
+
+            // Words JSON uit FW opbouwen (zelfde schema als in TranscriptService)
+            List<Map<String, Object>> items = new ArrayList<>();
+            if (fw != null) {
+                if (fw.words() != null && !fw.words().isEmpty()) {
+                    for (var w : fw.words()) {
+                        Map<String,Object> m = new LinkedHashMap<>();
+                        long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
+                        long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
+                        m.put("startMs", s);
+                        m.put("endMs",   e);
+                        m.put("text",    w.word() == null ? "" : w.word().trim());
+                        items.add(m);
+                    }
+                } else if (fw.segments() != null) {
+                    for (var seg : fw.segments()) {
+                        if (seg.words() == null) continue;
+                        for (var w : seg.words()) {
+                            Map<String,Object> m = new LinkedHashMap<>();
+                            long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
+                            long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
+                            m.put("startMs", s);
+                            m.put("endMs",   e);
+                            m.put("text",    w.word() == null ? "" : w.word().trim());
+                            items.add(m);
+                        }
+                    }
+                }
+            }
+            items.sort(Comparator.comparingLong(m -> (Long)m.get("startMs")));
+
+            Map<String,Object> wordsDoc = new LinkedHashMap<>();
+            wordsDoc.put("schema", "v1");
+            wordsDoc.put("generatedAt", Instant.now().toString());
+            wordsDoc.put("items", items);
+            t.setWords(wordsDoc);
+
+            return transcriptRepo.save(t);
+        });
+
+        // === Params
         var srcPath = storage.resolveRaw(media.getObjectKey());
         var params = DetectionParams.defaults().withMaxCandidates(8);
+
         Double sceneTh = parseDouble(payload, "sceneThreshold");
         if (sceneTh != null && sceneTh > 0) {
             params = new DetectionParams(
@@ -69,10 +124,10 @@ public class DetectWorkflow {
             );
         }
 
-        // 3) Detect
+        // === Detect
         var detected = detection.detect(srcPath, tr, params);
 
-        // 4) Refine (snap naar word-bounds met FW)
+        // === Refine
         long pad = 500;
         long MAX_SLICE_MS = 60_000;
         List<SegmentDTO> refined = new ArrayList<>(detected.size());
@@ -91,8 +146,8 @@ public class DetectWorkflow {
             }
         }
 
-        // 5) Idempotent opslaan
-        segmentRepo.deleteByMedia(media);
+        // === Opslaan (idempotent)
+        segmentRepo.deleteByMedia(media); // <-- Zorg dat deze methode bestaat in je repo
         if (!refined.isEmpty()) {
             var toSave = new ArrayList<Segment>(refined.size());
             for (var s : refined) {
@@ -106,6 +161,7 @@ public class DetectWorkflow {
 
         return refined.size();
     }
+
 
     private static Double parseDouble(Map<String,Object> m, String k) {
         if (m == null) return null;

@@ -20,6 +20,9 @@ public class TranscriptService {
         this.transcriptRepo = transcriptRepo;
         this.mediaRepo = mediaRepo;
     }
+    private static String nlw(String s, String def) {
+        return (s == null || s.isBlank()) ? def : s.toLowerCase(Locale.ROOT);
+    }
     /** Idempotentie: is er *enig* transcript (ongeacht lang/provider) voor dit mediaId? */
     @Transactional()
     public boolean existsAnyFor(UUID mediaId) {
@@ -33,8 +36,11 @@ public class TranscriptService {
     public UUID upsert(UUID mediaId, TranscriptionEngine.Result res) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
 
+        String lang     = nlw(res.lang(), "auto");
+        String provider = nlw(res.provider(), "unknown");
+
         Transcript transcript = transcriptRepo
-                .findByMediaAndLangAndProvider(media,"en","openai")
+                .findByMediaAndLangAndProvider(media,lang,provider)
                 .orElseGet(() -> new Transcript(media, res.lang(), res.provider()));
 
         transcript.setMedia(media);
@@ -44,11 +50,13 @@ public class TranscriptService {
 
         // Words -> JSON document
         List<Map<String, Object>> items = (res.words() == null) ? List.of()
-                : res.words().stream().map(w -> Map.<String,Object>of(
-                "startMs", w.startMs(),
-                "endMs",   w.endMs(),
-                "text",    w.text()
-        )).toList();
+                : res.words().stream().map(w -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("startMs", w.startMs());
+            m.put("endMs",   w.endMs());
+            m.put("text",    w.text());
+            return m;
+        }).toList();
 
         // >>> Gebruik een MUTABLE map i.p.v. Map.of(...)
         Map<String, Object> wordsDoc = new LinkedHashMap<>();
@@ -71,8 +79,14 @@ public class TranscriptService {
 
 
 
+    @Transactional
     public Optional<Transcript> get(UUID mediaId, String lang, String provider){
         Media media = mediaRepo.findById(mediaId).orElseThrow();
-        return transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai");
+        String l = (lang == null || lang.isBlank()) ? null : lang.toLowerCase(Locale.ROOT);
+        String p = (provider == null || provider.isBlank()) ? null : provider.toLowerCase(Locale.ROOT);
+        if (l != null && p != null) {
+            return transcriptRepo.findByMediaAndLangAndProvider(media, l, p);
+        }
+        return transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
     }
 }
