@@ -6,10 +6,7 @@ import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Project;
 import com.example.clipbot_backend.model.ProjectMediaLink;
-import com.example.clipbot_backend.repository.ClipRepository;
-import com.example.clipbot_backend.repository.MediaRepository;
-import com.example.clipbot_backend.repository.ProjectMediaRepository;
-import com.example.clipbot_backend.repository.ProjectRepository;
+import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.util.ClipStatus;
 import org.springframework.data.domain.Page;
@@ -29,19 +26,21 @@ public class ProjectService {
     private final AccountService accountService;
     private final MediaRepository mediaRepository;
     private final ClipRepository clipRepository;
+    private final AssetRepository assetRepository;
 
     public ProjectService(
             ProjectRepository projectRepository,
             ProjectMediaRepository projectMediaRepository,
             AccountService accountService,
             MediaRepository mediaRepository,
-            ClipRepository clipRepository
+            ClipRepository clipRepository, AssetRepository assetRepository
     ) {
         this.projectRepository = projectRepository;
         this.projectMediaRepository = projectMediaRepository;
         this.accountService = accountService;
         this.mediaRepository = mediaRepository;
         this.clipRepository = clipRepository;
+        this.assetRepository = assetRepository;
     }
 
     /* ---------- CREATE ---------- */
@@ -127,7 +126,7 @@ public class ProjectService {
                 : clipRepository.findByMediaInOrderByCreatedAtDesc(mediaList, pageable);
 
         // ✅ map naar DTO -> geen Hibernate proxy serialization meer
-        return page.map(ClipResponse::from);
+        return page.map(clip -> ClipResponse.from(clip,assetRepository));
     }
 
 

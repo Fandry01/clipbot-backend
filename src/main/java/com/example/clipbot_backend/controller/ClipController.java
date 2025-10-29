@@ -4,7 +4,9 @@ import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ClipCustomRequest;
 import com.example.clipbot_backend.dto.web.ClipFromSegmentRequest;
 import com.example.clipbot_backend.dto.web.EnqueueRenderRequest;
+import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Clip;
+import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.service.ClipService;
 import com.example.clipbot_backend.service.JobService;
 import com.example.clipbot_backend.util.ClipStatus;
@@ -22,10 +24,13 @@ import java.util.UUID;
 public class ClipController {
     private final ClipService clipService;
     private final JobService jobService;
+    private final AssetRepository assetRepo;
 
-    public ClipController(ClipService clipService, JobService jobService) {
+
+    public ClipController(ClipService clipService, JobService jobService, AssetRepository assetRepo) {
         this.clipService = clipService;
         this.jobService = jobService;
+        this.assetRepo = assetRepo;
     }
 
     @PostMapping("/from-segment")
@@ -40,7 +45,8 @@ public class ClipController {
 
     @GetMapping("/{id}")
     public ClipResponse get(@PathVariable UUID id) {
-        return ClipResponse.from(clipService.get(id));
+        var clip = clipService.get(id);
+        return ClipResponse.from(clip, assetRepo);
     }
 
     @GetMapping("/media/{mediaId}")
@@ -48,7 +54,7 @@ public class ClipController {
                                   @RequestParam(defaultValue = "0") int page,
                                   @RequestParam(defaultValue = "10") int size) {
         var entities = clipService.listByMedia(mediaId, PageRequest.of(page, size));
-        return entities.map(ClipResponse::from);
+        return entities.map( clip -> ClipResponse.from(clip,assetRepo));
     }
 
     // Render-job enqueuen (CLIP) — geef juiste mediaId mee via de clip
