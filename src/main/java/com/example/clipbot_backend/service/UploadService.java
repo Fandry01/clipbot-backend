@@ -58,8 +58,8 @@ public class UploadService {
     public UploadCompleteResponse uploadLocal(String ownerExternalSubject,
                                               String objectKey,
                                               MultipartFile file,
-                                              String sourceLabel) throws Exception{
-        if (file == null || file.isEmpty()){
+                                              String sourceLabel) throws Exception {
+        if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("file is empty");
         }
         if (ownerExternalSubject == null || ownerExternalSubject.isBlank()) {
@@ -68,39 +68,60 @@ public class UploadService {
         if (objectKey == null || objectKey.isBlank()) {
             // fallback: users/{sub}/raw/{uuid}.mp4
             objectKey = "users/" + ownerExternalSubject + "/raw/" + UUID.randomUUID() + ".mp4";
+        } else {
+            objectKey = objectKey.replace('\\', '/').replaceAll("^/+", "");
         }
         // 1) Ensure account
         var owner = accountRepo.findByExternalSubject(ownerExternalSubject).orElseGet(() -> accountRepo.save(new Account(ownerExternalSubject, ownerExternalSubject)));
 
-        // 2) Write file to RAW
-        Path tmp = Files.createTempFile("upload-", ".bin");
-        file.transferTo(tmp.toFile());
-        storageService.uploadToRaw(tmp, objectKey);
-        long sizeBytes = Files.size(tmp);
-        Files.deleteIfExists(tmp);
-
-        // 3) Register asset
-        var asset = new Asset(owner, AssetKind.MEDIA_RAW, objectKey, sizeBytes);
-        assetRepo.save(asset);
-
-        // 4) Create Media
-
         var media = new Media(owner, objectKey);
         media.setSource(sourceLabel != null ? sourceLabel : "upload");
-        media.setStatus(MediaStatus.UPLOADED);
-        mediarepo.save(media);
+        media.setStatus(MediaStatus.UPLOADING);
+        mediarepo.saveAndFlush(media);
+        Path tmp = null;
+        try {
+            // 2) Write file to RAW
+            tmp = Files.createTempFile("upload-", ".bin");
+            file.transferTo(tmp.toFile());
+            long sizeBytes = Files.size(tmp);
+            storageService.uploadToRaw(tmp, objectKey);
 
-        // 5) Enqueue TRANSCRIBE job
-        var job = new Job(JobType.TRANSCRIBE);
-        job.setMedia(media);
-        job.setStatus(JobStatus.QUEUED);
-        job.setCreatedAt(Instant.now());
-        job.setUpdatedAt(Instant.now());
-        jobRepo.save(job);
+            // 3) Register asset
+            Asset asset = new Asset(owner, AssetKind.MEDIA_RAW, objectKey, sizeBytes);
+            asset.setRelatedMedia(media);
+            assetRepo.save(asset);
 
-        return new UploadCompleteResponse(media.getId(), asset.getId(), objectKey, sizeBytes);
+            media.setStatus(MediaStatus.UPLOADED);
+            mediarepo.save(media);
+
+
+            // 5) Enqueue TRANSCRIBE job
+            var job = new Job(JobType.TRANSCRIBE);
+            job.setMedia(media);
+            job.setStatus(JobStatus.QUEUED);
+            job.setCreatedAt(Instant.now());
+            job.setUpdatedAt(Instant.now());
+            jobRepo.save(job);
+
+            return new UploadCompleteResponse(media.getId(), asset.getId(), objectKey, sizeBytes);
+
+        } catch (Exception e) {
+            // Failure: markeer media FAILED als hij bestaat
+            try {
+                if (media.getId() != null) {
+                    media.setStatus(MediaStatus.FAILED);
+                    mediarepo.save(media);
+                }
+            } catch (Exception ignore) {
+            }
+            throw e;
+        } finally {
+            if (tmp != null) try {
+                Files.deleteIfExists(tmp);
+            } catch (Exception ignore) {
+            }
+        }
     }
-
     private String sanitizePrefix(String p) {
         var s = p.replace('\\', '/');
         if (!s.endsWith("/")) s = s + "/";

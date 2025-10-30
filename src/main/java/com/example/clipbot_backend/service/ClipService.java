@@ -81,10 +81,20 @@ public class ClipService {
         return clipRepo.findById(clipId).orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
     }
+
     public UUID enqueueRender(JobService jobService, UUID clipId) {
         var clip = get(clipId);
-        var jobId = jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
-        return jobId;
+
+        // Als hij al bezig is, niks doen (idempotent gedrag)
+        if (clip.getStatus() == ClipStatus.RENDERING || clip.getStatus() == ClipStatus.QUEUED) {
+            // eventueel: return bestaand jobId als je dat bijhoudt
+            return jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
+        }
+
+        clip.setStatus(ClipStatus.QUEUED);
+        clipRepo.saveAndFlush(clip);
+
+        return jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
     }
 
 

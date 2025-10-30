@@ -72,14 +72,15 @@ public class MediaService  {
     ) {
         var owner = accountService.getByIdOrThrow(ownerId);
 
+
         var media = new Media();
         media.setOwner(owner);
         media.setExternalUrl(externalUrl);
         media.setPlatform(platform != null ? platform.id() : null);
         media.setSource((source == null || source.isBlank()) ? "url" : source);
+        media.setStatus(MediaStatus.DOWNLOADING);
 
         // Status die in je CHECK-constraint toegestaan is
-        media.setStatus(MediaStatus.REGISTERED);
 
         if (durationMs != null && durationMs > 0) media.setDurationMs(durationMs);
 

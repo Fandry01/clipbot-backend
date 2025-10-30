@@ -128,25 +128,34 @@ void handleTranscribe(Job job) {
             throw new IllegalArgumentException("media.objectKey invalid: " + key);
         }
 
-        boolean isMulti = media.isMultiSpeakerEffective();
-        TranscriptionEngine engine = isMulti ? gptDiarizeEngine : fasterWhisperEngine;
+
 
         // 2) Inputbestand garanderen in RAW
         Path input;
         String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
+        media.setStatus(MediaStatus.PROCESSING);
+        mediaRepo.save(media);
+
         if ("url".equals(src)) {
             // Download naar RAW als het er niet staat. Laat de downloader exact onder `key` plaatsen.
             input = urlDownloader.ensureRawObject(
                     Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source"),
                     key
             );
+        }else {
+            // als het geen url is, verifieer dat raw bestand bestaat
+            java.nio.file.Path raw = storage.resolveRaw(key);
+            if (!java.nio.file.Files.exists(raw)) {
+                throw new IllegalStateException("RAW missing for objectKey: " + key);
+            }
         }
-        media.setStatus(MediaStatus.PROCESSING);
-        mediaRepo.save(media);
 
         long t0 = System.nanoTime();
 
         // 3) Transcribe
+        boolean isMulti = media.isMultiSpeakerEffective();
+        TranscriptionEngine engine = isMulti ? gptDiarizeEngine : fasterWhisperEngine;
+
         var req = new TranscriptionEngine.Request(
                 media.getId(),
                 key,          // laat engine zelf resolveRaw(key) doen (liefst via StorageService-injectie)
@@ -174,8 +183,17 @@ void handleTranscribe(Job job) {
 
     } catch (Exception ex) {
         LOGGER.error("TRANSCRIBE {} failed: {}", mediaId, ex.toString(), ex);
+        try {
+            if (job.getMedia() != null) {
+                mediaRepo.findById(job.getMedia().getId()).ifPresent(m -> {
+                    m.setStatus(MediaStatus.FAILED);
+                    mediaRepo.save(m);
+                });
+            }
+        } catch (Exception ignore) {}
         jobService.markError(job.getId(), ex.getMessage(), Map.of("stack", stackTop(ex)));
     }
+
 }
     private String stackTop(Throwable ex) {
         var sw = new java.io.StringWriter();
