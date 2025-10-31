@@ -4,5 +4,6 @@ public enum JobType {
     TRANSCRIBE,
     DETECT,
     CLIP,
-    THUMBNAIL
+    THUMBNAIL,
+    DOWNLOAD
 }
