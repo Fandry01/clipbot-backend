@@ -2,54 +2,56 @@ package com.example.clipbot_backend.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+
 import java.util.List;
 
-@EnableWebSecurity
 @Configuration
+@EnableWebSecurity
 public class WebSecurityConfig {
+
     @Bean
-    SecurityFilterChain openDevSecurity(HttpSecurity http) throws Exception {
+    SecurityFilterChain api(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable())        // API: geen CSRF
-                .cors(cors -> cors.configurationSource(corsConfig()))
+                // DEV: geen sessions, geen login
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Zet CSRF uit voor API
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/v1/**"))
+                // Sta CORS toe (zie bean hieronder)
+                .cors(Customizer.withDefaults())
+                // Alles onder /v1/** vrijgeven in dev
                 .authorizeHttpRequests(auth -> auth
-                        .anyRequest().permitAll()        // ALLES open in 'local'
+                        .requestMatchers("/v1/**").permitAll()
+                        .anyRequest().permitAll()
+                )
+                // Headers: dev-vriendelijk
+                .headers(h -> h
+                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin)
                 );
+
         return http.build();
     }
 
-
     @Bean
-    CorsConfigurationSource corsConfig() {
-        CorsConfiguration c = new CorsConfiguration();
-        c.setAllowedOrigins(List.of(
-                "http://localhost:5174",
-                "http://localhost:3000"
-        ));
-        c.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
-        c.setAllowedHeaders(List.of(
-                "Authorization","Content-Type","Accept","Origin","X-Requested-With",
-                "Range","If-Range"
-        ));
-        c.setExposedHeaders(List.of(
-                "Accept-Ranges","Content-Range","Content-Length","Content-Disposition","Location"
-        ));
-        c.setAllowCredentials(false); // zet true als je cookies/tokens via browser meegeeft
-        c.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", c);
-        return source;
+    CorsConfigurationSource corsConfigurationSource() {
+        var cfg = new CorsConfiguration();
+        // proxy-origin toestaan
+        cfg.setAllowedOriginPatterns(List.of("http://localhost:*"));
+        cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+        cfg.setAllowedHeaders(List.of("*"));
+        cfg.setExposedHeaders(List.of("Accept-Ranges","Content-Range","Content-Length","Content-Disposition","Location"));
+        cfg.setAllowCredentials(false); // geen cookies nodig
+        var src = new UrlBasedCorsConfigurationSource();
+        src.registerCorsConfiguration("/**", cfg);
+        return src;
     }
-
-
 }
