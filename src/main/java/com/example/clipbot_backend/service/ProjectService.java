@@ -82,6 +82,10 @@ public class ProjectService {
         var owner = accountService.getByIdOrThrow(ownerId);
         return ensureProjectOwnedBy(projectId, owner);
     }
+    public Project get(UUID projectId) {
+        return projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND"));
+    }
 
     /* ---------- MEDIA-LINK ---------- */
 
@@ -102,6 +106,24 @@ public class ProjectService {
         var link = new ProjectMediaLink(project, media);
         return projectMediaRepository.save(link);
     }
+
+    @Transactional
+    public ProjectMediaLink linkMediaStrict(UUID projectId, UUID mediaId) {
+        var project = get(projectId);
+
+        var media = mediaRepository.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+
+        if (!media.getOwner().getId().equals(project.getOwner().getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
+        }
+        if (projectMediaRepository.existsByProjectAndMedia(project, media)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "MEDIA_ALREADY_LINKED");
+        }
+        var link = new ProjectMediaLink(project, media);
+        return projectMediaRepository.save(link);
+    }
+
 
     public List<ProjectMediaLink> listProjectMedia(UUID projectId, UUID ownerId) {
         var owner = accountService.getByIdOrThrow(ownerId);

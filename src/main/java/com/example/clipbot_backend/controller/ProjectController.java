@@ -3,6 +3,8 @@ package com.example.clipbot_backend.controller;
 import com.example.clipbot_backend.dto.ClipResponse;
 import com.example.clipbot_backend.dto.web.ProjectCreateRequest;
 import com.example.clipbot_backend.dto.web.ProjectMediaLinkRequest;
+import com.example.clipbot_backend.dto.web.ProjectMediaLinkResponse;
+import com.example.clipbot_backend.dto.web.ProjectResponse;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Project;
 import com.example.clipbot_backend.model.ProjectMediaLink;
@@ -36,10 +38,11 @@ public class ProjectController {
     public ProjectResponse createProject(@Valid @RequestBody ProjectCreateRequest request) {
         // Service resolve’t owner (ownerId of ownerExternalSubject)
         Project project = projectService.createProject(request);
-        return toResponse(project);
+        return ProjectResponse.from(project);
     }
 
     /* ================== READ LIST ================== */
+
 
     // Ondersteunt ?ownerId=... OF ?ownerExternalSubject=...
     @GetMapping
@@ -52,7 +55,7 @@ public class ProjectController {
         Page<Project> p = (ownerExternalSubject != null && !ownerExternalSubject.isBlank())
                 ? projectService.listProjectsBySubject(ownerExternalSubject, PageRequest.of(page, size))
                 : projectService.listProjects(ownerId, PageRequest.of(page, size));
-        return p.map(this::toResponse);
+        return p.map(ProjectResponse::from);
     }
 
     /* ================== READ ONE ================== */
@@ -66,21 +69,37 @@ public class ProjectController {
     ) {
         UUID resolvedOwnerId = resolveOwnerParam(ownerId, ownerExternalSubject);
         Project project = projectService.getProject(projectId, resolvedOwnerId);
-        return toResponse(project);
+        return ProjectResponse.from(project);
     }
 
     /* ================== MEDIA LINKING ================== */
 
+//    @PostMapping("/{projectId}/media")
+//    @ResponseStatus(HttpStatus.CREATED)
+//    public ProjectMediaLinkResponse linkMedia(
+//            @PathVariable UUID projectId,
+//            @Valid @RequestBody ProjectMediaLinkRequest request // bevat ownerId OF ownerExternalSubject + mediaId
+//    ) {
+//        UUID resolvedOwnerId = resolveOwnerParam(request.ownerId(), request.ownerExternalSubject());
+//        ProjectMediaLink link = projectService.linkMedia(projectId, resolvedOwnerId, request.mediaId());
+//        return toResponse(link);
+//    }
+/* MEDIA LINK (STRICT) */
     @PostMapping("/{projectId}/media")
     @ResponseStatus(HttpStatus.CREATED)
     public ProjectMediaLinkResponse linkMedia(
             @PathVariable UUID projectId,
-            @Valid @RequestBody ProjectMediaLinkRequest request // bevat ownerId OF ownerExternalSubject + mediaId
+            @RequestBody LinkReq req
     ) {
-        UUID resolvedOwnerId = resolveOwnerParam(request.ownerId(), request.ownerExternalSubject());
-        ProjectMediaLink link = projectService.linkMedia(projectId, resolvedOwnerId, request.mediaId());
-        return toResponse(link);
+        var link = projectService.linkMediaStrict(projectId, req.mediaId());
+        return new ProjectMediaLinkResponse(
+                link.getId().getProjectId(),
+                link.getId().getMediaId(),
+                link.getCreatedAt()
+        );
     }
+    public record LinkReq(UUID mediaId) {}
+
 
     @GetMapping("/{projectId}/media")
     public List<ProjectMediaLinkResponse> listMedia(
@@ -91,7 +110,10 @@ public class ProjectController {
         UUID resolvedOwnerId = resolveOwnerParam(ownerId, ownerExternalSubject);
         return projectService.listProjectMedia(projectId, resolvedOwnerId)
                 .stream()
-                .map(this::toResponse)
+                .map(l -> new ProjectMediaLinkResponse(
+                l.getId().getProjectId(),
+                l.getId().getMediaId(),
+                l.getCreatedAt()))
                 .toList();
     }
 
@@ -125,37 +147,8 @@ public class ProjectController {
         return ownerId; // kan null zijn -> service gooit dan OWNER_REQUIRED
     }
 
-    private ProjectResponse toResponse(Project p) {
-        return new ProjectResponse(
-                p.getId(),
-                p.getOwner().getId(),
-                p.getTitle(),
-                p.getCreatedAt(),
-                p.getTemplateId()
-        );
-    }
 
-    private ProjectMediaLinkResponse toResponse(ProjectMediaLink link) {
-        return new ProjectMediaLinkResponse(
-                link.getId().getProjectId(),
-                link.getId().getMediaId(),
-                link.getCreatedAt()
-        );
-    }
 
-    /* ================== DTOs (API view) ================== */
 
-    public record ProjectResponse(
-            UUID id,
-            UUID ownerId,
-            String title,
-            Instant createdAt,
-            UUID templateId
-    ) {}
 
-    public record ProjectMediaLinkResponse(
-            UUID projectId,
-            UUID mediaId,
-            Instant createdAt
-    ) {}
 }
