@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -16,107 +17,112 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
-public class OpenAITranscriptionEngine  implements TranscriptionEngine{
-    private final StorageService storageService;
-    private final WebClient client;
-    private final OpenAIAudioProperties props;
+    public class OpenAITranscriptionEngine implements TranscriptionEngine {
+        private final StorageService storageService;
+        private final WebClient client;
+        private final OpenAIAudioProperties props;
+        private final ObjectMapper om = new ObjectMapper();
 
-    public OpenAITranscriptionEngine(StorageService storageService, @Qualifier("openAiWebClient")WebClient client, OpenAIAudioProperties props) {
-        this.storageService = storageService;
-        this.client = client;
-        this.props = props;
-    }
-    @Override
-    public Result transcribe(Request request) throws Exception {
-        Path input = storageService.resolveRaw(request.objectKey());
-        if (!Files.exists(input)) throw new IllegalArgumentException("input not found: " + input);
-
-        var form = new LinkedMultiValueMap<String, Object>();
-        form.add("file", new FileSystemResource(input));
-        form.add("model", props.getModel()); // bv. whisper-1 of gpt-4o-transcribe
-
-        // Language hint: eerst request, anders global property
-        String langHint = request.langHint() != null ? request.langHint() : props.getLanguage();
-        if (langHint != null && !langHint.isBlank()) {
-            form.add("language", langHint);
+        public OpenAITranscriptionEngine(StorageService storageService,
+                                         @Qualifier("openAiWebClient") WebClient client, // ← fix Qualifier
+                                         OpenAIAudioProperties props) {
+            this.storageService = storageService;
+            this.client = client;
+            this.props = props;
         }
 
-        // 🔑 Zorg dat we rich JSON + word timestamps krijgen
-        form.add("response_format", "verbose_json");
-        // Whisper: ondersteunt granularities; 4o-transcribe kan dit negeren, is niet erg
-        form.add("timestamp_granularities[]", "word");
+        @Override
+        public Result transcribe(Request request) throws Exception {
+            Path input = storageService.resolveRaw(request.objectKey());
+            if (!Files.exists(input)) throw new IllegalArgumentException("input not found: " + input);
 
-        String json = client.post()
-                .uri("/v1/audio/transcriptions")
-                // laat Spring zelf de multipart boundary/type kiezen:
-                // .contentType(MediaType.MULTIPART_FORM_DATA)  // ← weg laten
-                .body(BodyInserters.fromMultipartData(form))
-                .retrieve()
-                .bodyToMono(String.class)
-                .block(Duration.ofSeconds(props.getTimeoutSeconds()));
+            var form = new LinkedMultiValueMap<String, Object>();
+            form.add("file", new FileSystemResource(input));
+            form.add("model", props.getModel());
 
-        var root = new ObjectMapper().readTree(json);
+            String langHint = request.langHint() != null && !request.langHint().isBlank()
+                    ? request.langHint().toLowerCase(Locale.ROOT)
+                    : (props.getLanguage() == null ? null : props.getLanguage().toLowerCase(Locale.ROOT));
+            if (langHint != null && !langHint.isBlank()) form.add("language", langHint);
 
-        String text = optText(root, "text");
-        String lang = optText(root, "language"); // kan ontbreken
-        List<TranscriptionEngine.Word> words = new ArrayList<>();
+            form.add("response_format", "verbose_json");
+            form.add("timestamp_granularities[]", "word"); // genegeerd? geen probleem
 
-        // words direct
-        if (root.has("words") && root.get("words").isArray()) {
-            for (var w : root.get("words")) words.add(parseWord(w));
-        }
-        // of per segment
-        else if (root.has("segments") && root.get("segments").isArray()) {
-            for (var seg : root.get("segments")) {
-                if (seg.has("words")) {
-                    for (var w : seg.get("words")) words.add(parseWord(w));
+            JsonNode root = client.post()
+                    .uri("/v1/audio/transcriptions")
+                    .body(BodyInserters.fromMultipartData(form))
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, resp ->
+                            resp.bodyToMono(String.class).defaultIfEmpty("")
+                                    .map(body -> new RuntimeException("OpenAI ASR error %s: %s".formatted(resp.statusCode(), body))))
+                    .bodyToMono(JsonNode.class)
+                    .block(Duration.ofSeconds(props.getTimeoutSeconds()));
+
+            if (root == null) throw new RuntimeException("Empty response from OpenAI ASR");
+
+            String text = optText(root, "text");
+            String lang = optText(root, "language"); // kan ontbreken
+            List<TranscriptionEngine.Word> words = new ArrayList<>();
+
+            // woorden: root.words[] of segments[].words[]
+            if (root.has("words") && root.get("words").isArray()) {
+                for (var w : root.get("words")) words.add(parseWordSafe(w));
+            } else if (root.has("segments") && root.get("segments").isArray()) {
+                for (var seg : root.get("segments")) {
+                    if (seg.has("words")) {
+                        for (var w : seg.get("words")) words.add(parseWordSafe(w));
+                    }
+                    if ((text == null || text.isBlank()) && seg.has("text")) {
+                        text = append(text, seg.get("text").asText(""));
+                    }
+                    if ((lang == null || lang.isBlank()) && seg.has("language")) {
+                        lang = seg.get("language").asText("");
+                    }
                 }
-                if (text == null && seg.has("text")) text = append(text, seg.get("text").asText());
-                if (lang == null && seg.has("language")) lang = seg.get("language").asText();
             }
+            if (text == null) text = "";
+            if (lang == null || lang.isBlank()) lang = "auto";
+            lang = lang.toLowerCase(Locale.ROOT);
+
+            // clamp + sort
+            words = words.stream()
+                    .map(w -> new TranscriptionEngine.Word(
+                            Math.max(0L, w.startMs()),
+                            Math.max(Math.max(0L, w.startMs()), w.endMs()),
+                            w.text()))
+                    .sorted(Comparator.comparingLong(TranscriptionEngine.Word::startMs))
+                    .toList();
+
+            // meta + segments (belangrijk voor TranscriptService.upsert)
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("provider", "openai");
+            meta.put("model", props.getModel());
+            if (root.has("segments") && root.get("segments").isArray()) {
+                meta.put("segments", om.convertValue(root.get("segments"), List.class));
+            }
+
+            return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
         }
 
-        if (text == null) text = "";
-        if (lang == null) lang = "auto";
+        // helpers
+        private static String append(String base, String add) {
+            return (base == null || base.isBlank()) ? add : (base + " " + add);
+        }
 
-        Map<String,Object> meta = Map.of(
-                "provider", "openai",
-                "model", props.getModel()
-        );
+        private TranscriptionEngine.Word parseWordSafe(JsonNode w) {
+            double s = w.path("start").asDouble(Double.NaN);
+            double e = w.path("end").asDouble(Double.NaN);
+            long startMs = Double.isFinite(s) ? Math.round(s * 1000.0) : 0L;
+            long endMs   = Double.isFinite(e) ? Math.round(e * 1000.0) : startMs;
+            String text  = w.path("word").asText(w.path("text").asText(""));
+            return new TranscriptionEngine.Word(startMs, endMs, text);
+        }
 
-        return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
+        private static String optText(JsonNode node, String field) {
+            return (node.has(field) && !node.get(field).isNull() && !node.get(field).asText().isBlank())
+                    ? node.get(field).asText() : null;
+        }
     }
-
-    // helpers:
-    private static String append(String base, String add) {
-        return (base == null || base.isBlank()) ? add : (base + " " + add);
-    }
-
-    private Word parseWord(JsonNode w) {
-        // Whisper verbose_json woorden bevatten meestal start/end (sec) + text
-        long startMs = (long) Math.round(w.path("start").asDouble(0) * 1000);
-        long endMs   = (long) Math.round(w.path("end").asDouble(0) * 1000);
-        String text  = w.path("word").asText(w.path("text").asText(""));
-        return new Word(startMs, endMs, text);
-    }
-
-    private String optText(JsonNode node, String field) {
-        return node.has(field) && !node.get(field).isNull() ? node.get(field).asText() : null;
-    }
-
-    private static String firstNonBlank(JsonNode... nodes){
-        for (var n : nodes) if (n!=null && !n.isMissingNode() && !n.isNull() && !n.asText().isBlank()) return n.asText();
-        return null;
-    }
-    private static long asMillis(JsonNode msField, JsonNode secField) {
-        if (msField != null && msField.isNumber()) return msField.asLong();
-        if (secField != null && secField.isNumber()) return Math.round(secField.asDouble() * 1000.0);
-        return 0L;
-    }
-
-}

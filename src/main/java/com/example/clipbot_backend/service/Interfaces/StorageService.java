@@ -26,4 +26,6 @@ public interface StorageService {
     boolean existsInOut(String objectKey);
     void deleteRaw(String objectKey);
     void deleteOut(String objectKey);
+    Path rootRaw();
+    Path rootOut();
 }

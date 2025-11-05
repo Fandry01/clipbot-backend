@@ -5,7 +5,8 @@ import java.util.UUID;
 
 public record ProjectMediaLinkResponse(
         UUID projectId,
-        UUID mediaId,
-        Instant createdAt
+        String platform,
+        String externalUrl,
+        Instant linkedAt
 ) {
 }

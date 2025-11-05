@@ -2,6 +2,7 @@ package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.*;
 import com.example.clipbot_backend.model.Template;
+import com.example.clipbot_backend.repository.AccountRepository;
 import com.example.clipbot_backend.repository.ProjectRepository;
 import com.example.clipbot_backend.repository.TemplateRepository;
 import com.example.clipbot_backend.service.Interfaces.TemplateService;
@@ -22,11 +23,13 @@ public class TemplateServiceImpl implements TemplateService {
 
     private final TemplateRepository repo;
     private final ProjectRepository projectRepo;
+    private final AccountRepository accountRepo;
     private final TemplateMapper mapper = new TemplateMapper();
 
-    public TemplateServiceImpl(TemplateRepository repo, ProjectRepository projectRepo) {
+    public TemplateServiceImpl(TemplateRepository repo, ProjectRepository projectRepo, AccountRepository accountRepo) {
         this.repo = repo;
         this.projectRepo = projectRepo;
+        this.accountRepo = accountRepo;
     }
 
     @Override
@@ -34,8 +37,9 @@ public class TemplateServiceImpl implements TemplateService {
         if (req.ownerId() == null) throw bad("OWNER_REQUIRED");
         if (req.name() == null || req.name().isBlank()) throw bad("NAME_REQUIRED");
 
+        var ownerRef = accountRepo.getReferenceById(req.ownerId());
         var t = new Template();
-        t.setOwnerId(req.ownerId());
+        t.setOwner(ownerRef);
         t.setName(req.name().trim());
         t.setJsonConfig(mapper.toJson(req.config()));
         repo.save(t);

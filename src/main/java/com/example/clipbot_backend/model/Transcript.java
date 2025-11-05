@@ -1,6 +1,8 @@
 package com.example.clipbot_backend.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
+import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
@@ -28,21 +30,19 @@ public class Transcript {
     private String text;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "words")
-    private Map<String, Object> words;
+    @Column(name="words", columnDefinition="jsonb")
+    private JsonNode words;
     // array
     @Version
     @Column(name = "version", nullable = false)
     private long version;
 
-
+    @CreationTimestamp
+    @Column(name="created_at", nullable=false, updatable=false)
     private Instant createdAt;
 
-    @PrePersist
-    void onCreate() { this.createdAt = Instant.now(); }
 
-
-    protected Transcript() {}
+    public Transcript() {}
 
     public Transcript(Media media, String lang, String provider) {
         this.media = media;
@@ -57,9 +57,24 @@ public class Transcript {
     public String getProvider() { return provider; }
     public void setProvider(String provider) { this.provider = provider; }
     public String getText() { return text; }
+
+    public JsonNode getWords() {
+        return words;
+    }
+
+    public void setWords(JsonNode words) {
+        this.words = words;
+    }
+
+    public void setVersion(long version) {
+        this.version = version;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
     public void setText(String text) { this.text = text; }
-    public Map<String, Object> getWords() { return words; }
-    public void setWords(Map<String, Object> words) { this.words = words; }
     public Instant getCreatedAt() { return createdAt; }
     public long getVersion() { return version; }
 

@@ -8,9 +8,14 @@ import com.example.clipbot_backend.util.MediaStatus;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.UUID;
 
 @Service
@@ -27,9 +32,13 @@ public class MediaService  {
     @Transactional
     public UUID createMedia(UUID ownerId, String objectKey, String source) {
         var owner = accountService.getByIdOrThrow(ownerId);
-        var m = new Media(owner, objectKey);
-        m.setSource(source);
-        m.setStatus(MediaStatus.UPLOADED);
+        if (objectKey == null || objectKey.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OBJECT_KEY_REQUIRED");
+        }
+        String normalizedSource = normalizeSource(source);
+        var m = new Media(owner, normalizeObjectKey(objectKey));
+        m.setSource(normalizedSource);
+        m.setStatus(MediaStatus.DOWNLOADING);
         mediaRepo.save(m);
         return m.getId();
     }
@@ -42,13 +51,14 @@ public class MediaService  {
 
 
     public Media get(UUID mediaId) {
-        return mediaRepo.findById(mediaId).orElseThrow();
+        return mediaRepo.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
     }
 
 
     @Transactional
     public void setStatus(UUID mediaId, MediaStatus status) {
-        var media = mediaRepo.findById(mediaId).orElseThrow();
+        var media = get(mediaId);
         media.setStatus(status);
         mediaRepo.save(media);
     }
@@ -72,16 +82,21 @@ public class MediaService  {
     ) {
         var owner = accountService.getByIdOrThrow(ownerId);
 
+        String normalizedSource = normalizeSource(source);
+        if (!"url".equals(normalizedSource)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SOURCE_MUST_BE_URL");
+        }
+        if (externalUrl == null || externalUrl.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "EXTERNAL_URL_REQUIRED");
+        }
 
         var media = new Media();
         media.setOwner(owner);
         media.setExternalUrl(externalUrl);
         media.setPlatform(platform != null ? platform.id() : null);
-        media.setSource((source == null || source.isBlank()) ? "url" : source);
+        media.setSource(normalizedSource);
         media.setStatus(MediaStatus.DOWNLOADING);
-
         // Status die in je CHECK-constraint toegestaan is
-
         if (durationMs != null && durationMs > 0) media.setDurationMs(durationMs);
 
         // Kies objectKey:
@@ -98,15 +113,16 @@ public class MediaService  {
 
     private String buildExternalObjectKey(String url, MediaPlatform platform) {
         // map platform → slug
-        String slug = switch (platform) {
+        String slug = (platform == null) ? "url" : switch (platform) {
             case YOUTUBE -> "yt";
             case VIMEO -> "vimeo";
             case TWITCH -> "twitch";
             case FACEBOOK -> "fb";
+            case REDDIT -> "reddit";
             case X -> "x";
             case RUMBLE -> "rumble";
             case LINKEDIN -> "li";
-            default -> "url";
+            case OTHER -> null;
         };
 
         String idPart = extractPlatformId(url, platform);
@@ -129,11 +145,20 @@ public class MediaService  {
         }
         return k;
     }
+    private String normalizeSource(String source) {
+        String s = (source == null ? "" : source.trim().toLowerCase());
+        return switch (s) {
+            case "upload" -> "upload";
+            case "url", "" -> "url";
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_SOURCE");
+        };
+    }
 
     // Zeer simpele extracties; je kunt ze later uitbreiden
     private String extractPlatformId(String rawUrl, MediaPlatform platform) {
+        if (platform == null) return null;
         try {
-            var uri = new java.net.URI(rawUrl);
+            var uri = new URI(rawUrl);
             var host = (uri.getHost() == null) ? "" : uri.getHost().toLowerCase();
             var path = (uri.getPath() == null) ? "" : uri.getPath();
             var query = (uri.getQuery() == null) ? "" : uri.getQuery();
@@ -197,8 +222,8 @@ public class MediaService  {
 
     private String shortHash(String s) {
         try {
-            var md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            var md = MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(StandardCharsets.UTF_8));
             // eerste 10 hex chars is genoeg als slug
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < 5; i++) { // 5 bytes → 10 hex chars

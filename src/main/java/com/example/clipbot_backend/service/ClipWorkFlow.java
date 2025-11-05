@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.RenderOptions;
+import com.example.clipbot_backend.dto.RenderResult;
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.model.*;
@@ -13,11 +14,15 @@ import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
+import jakarta.annotation.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -47,80 +52,126 @@ public class ClipWorkFlow {
         this.mediaRepo = mediaRepo;
     }
 
-    @Transactional
-    public void run(UUID clipId) throws Exception {
-        // 1) Clip + Media ophalen binnen TX ( voorkomt LazyInitializationException )
-        Clip clip = clipRepo.findById(clipId).orElseThrow();
-        Media media = clip.getMedia();
+    @Transactional // TX A (kort)
+    public void markRendering(UUID clipId) {
+        var clip = clipRepo.findById(clipId).orElseThrow();
         clip.setStatus(ClipStatus.RENDERING);
         clipRepo.saveAndFlush(clip);
+    }
+    @Transactional(propagation = Propagation.REQUIRES_NEW) // TX B
+    public void persistSuccess(UUID clipId, RenderResult res, @Nullable SubtitleFiles subs) {
+        var clip = clipRepo.findById(clipId).orElseThrow();
+        var media = clip.getMedia();
+        var owner = media.getOwner();
 
+        var clipRef = clipRepo.getReferenceById(clip.getId());
+        var mediaRef = mediaRepo.getReferenceById(media.getId());
+
+        // (optioneel) assets opschonen per kind
+        // assetRepo.deleteByRelatedClipAndKind(clipRef, AssetKind.MP4); ...
+
+        Asset mp4 = new Asset(owner, AssetKind.MP4, res.mp4Key(), ensureSize(res.mp4Key(), res.mp4Size()));
+        mp4.setRelatedClip(clipRef);
+        mp4.setRelatedMedia(mediaRef);
+        assetRepo.save(mp4);
+
+        if (res.thumbKey() != null) {
+            Asset thumb = new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), ensureSize(res.thumbKey(), res.thumbSize()));
+            thumb.setRelatedClip(clipRef);
+            thumb.setRelatedMedia(mediaRef);
+            assetRepo.save(thumb);
+        }
+
+        if (subs != null) {
+            if (subs.srtKey() != null) {
+                Asset srt = new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), ensureSize(subs.srtKey(), subs.srtSize()));
+                srt.setRelatedClip(clipRef); srt.setRelatedMedia(mediaRef);
+                assetRepo.save(srt);
+            }
+            if (subs.vttKey() != null) {
+                Asset vtt = new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), ensureSize(subs.vttKey(), subs.vttSize()));
+                vtt.setRelatedClip(clipRef); vtt.setRelatedMedia(mediaRef);
+                assetRepo.save(vtt);
+            }
+        }
+
+        // deprecate: clip.setCaptionSrtKey(...)
+        clip.setStatus(ClipStatus.READY);
+        clipRepo.save(clip);
+
+        // (optioneel) MediaStatusService.trySetReady(media) als voorwaarden kloppen
+    }
+    @Transactional(propagation = Propagation.REQUIRES_NEW) // TX C
+    public void persistFailure(UUID clipId, Exception e) {
+        var clip = clipRepo.findById(clipId).orElseThrow();
+        clip.setStatus(ClipStatus.FAILED);
+        var m = new LinkedHashMap<String,Object>(clip.getMeta() == null ? Map.of() : clip.getMeta());
+        m.put("renderError", e.toString());
+        clip.setMeta(m);
+        clipRepo.save(clip);
+    }
+
+
+    public void run(UUID clipId) throws Exception {
+        // TX A
+        markRendering(clipId);
+
+        // No TX: IO/Render
+        Clip clip = clipRepo.findById(clipId).orElseThrow(); // read-only ok
+        Media media = clip.getMedia();
+
+        Path srcPath = storage.resolveRaw(media.getObjectKey());
+        if (srcPath == null || !Files.exists(srcPath))
+            throw new IllegalStateException("RAW missing: " + media.getObjectKey());
+
+        Transcript tr = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
+        SubtitleFiles subs = (tr != null) ? subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs()) : null;
+
+        RenderOptions options = RenderOptions.withDefaults(clip.getMeta(), subs);
+        RenderResult res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
+        validateOutputs(res, subs); // check presence/sizes
+
+        // TX B
         try {
-            // 2) Bronpad bepalen
-            Path srcPath = storage.resolveRaw(media.getObjectKey());
-            if (srcPath == null || !Files.exists(srcPath)) {
-                throw new IllegalStateException("RAW missing: " + media.getObjectKey());
-            }
-
-            // 3) Laatste transcript (ongeacht provider) → subs
-            Transcript tr = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
-            SubtitleFiles subs = null;
-            if (tr != null) {
-                subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
-            }
-
-            // 4) Render
-            RenderOptions options = RenderOptions.withDefaults(clip.getMeta(), subs);
-            var res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
-
-            // 5) Assets registreren
-            var clipRef = clipRepo.getReferenceById(clip.getId());
-            var mediaRef = mediaRepo.getReferenceById(media.getId());
-            Account owner = media.getOwner();
-
-            Asset mp4 = new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size());
-            mp4.setRelatedClip(clipRef);
-            mp4.setRelatedMedia(mediaRef);
-            assetRepo.save(mp4);
-
-            if (res.thumbKey() != null) {
-                Asset thumb = new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), res.thumbSize());
-                thumb.setRelatedClip(clipRef);      // ← nodig voor /v1/assets/latest/clip
-                thumb.setRelatedMedia(mediaRef);
-                assetRepo.saveAndFlush(thumb);
-            }
-
-            if (subs != null) {
-                if (subs.srtKey() != null) {
-                    Asset srt = new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), subs.srtSize());
-                    srt.setRelatedClip(clipRef);
-                    srt.setRelatedMedia(mediaRef);
-                    assetRepo.saveAndFlush(srt);
-                }
-
-                if (subs.vttKey() != null) {
-                    Asset vtt = new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), subs.vttSize());
-                    vtt.setRelatedClip(clipRef);
-                    vtt.setRelatedMedia(mediaRef);
-                    assetRepo.saveAndFlush(vtt);
-                }
-            }
-
-            // 6) Clip bijwerken
-            clip.setCaptionSrtKey(subs != null ? subs.srtKey() : null);
-            clip.setCaptionVttKey(subs != null ? subs.vttKey() : null);
-            clip.setStatus(ClipStatus.READY);
-            clipRepo.save(clip);
+            persistSuccess(clipId, res, subs);
         } catch (Exception e) {
-            // status op FAILED bij crash
-            clip.setStatus(ClipStatus.FAILED);
-            // optioneel: error in meta stoppen
-            Map<String, Object> m = new java.util.LinkedHashMap<>(clip.getMeta() == null ? Map.of() : clip.getMeta());
-            m.put("renderError", e.toString());
-            clip.setMeta(m);
-            clipRepo.save(clip);
+            // TX C
+            persistFailure(clipId, e);
             throw e;
         }
     }
+    private long ensureSize(String key, long known) {
+        if (known > 0) return known;
+        try { return Files.size(storage.resolveOut(key)); }
+        catch (IOException e) { throw new IllegalStateException("sizeOf failed: " + key, e); }
+    }
+
+    private void validateOutputs(RenderResult res, @Nullable SubtitleFiles subs) throws IOException {
+        if (res == null || res.mp4Key() == null || res.mp4Key().isBlank())
+            throw new IllegalStateException("Render produced no mp4Key");
+        Path mp4 = storage.resolveOut(res.mp4Key());
+        if (!Files.exists(mp4) || Files.size(mp4) <= 0)
+            throw new IllegalStateException("MP4 missing/empty: " + res.mp4Key());
+
+        if (res.thumbKey() != null) {
+            Path t = storage.resolveOut(res.thumbKey());
+            if (!Files.exists(t) || Files.size(t) <= 0)
+                throw new IllegalStateException("Thumb missing/empty: " + res.thumbKey());
+        }
+        if (subs != null) {
+            if (subs.srtKey() != null) {
+                Path s = storage.resolveOut(subs.srtKey());
+                if (!Files.exists(s) || Files.size(s) <= 0)
+                    throw new IllegalStateException("SRT missing/empty: " + subs.srtKey());
+            }
+            if (subs.vttKey() != null) {
+                Path v = storage.resolveOut(subs.vttKey());
+                if (!Files.exists(v) || Files.size(v) <= 0)
+                    throw new IllegalStateException("VTT missing/empty: " + subs.vttKey());
+            }
+        }
+    }
+
+
 }
 

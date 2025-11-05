@@ -16,4 +16,8 @@ public record ProjectCreateRequest(
     public boolean isOwnerProvided() {
         return ownerId != null || (ownerExternalSubject != null && !ownerExternalSubject.isBlank());
     }
+    @AssertTrue(message = "Provide either ownerId or ownerExternalSubject, not both")
+    public boolean notBoth() {
+        return !(ownerId != null && ownerExternalSubject != null && !ownerExternalSubject.isBlank());
+    }
 }

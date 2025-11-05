@@ -5,8 +5,13 @@ import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
 
@@ -14,11 +19,13 @@ import java.util.*;
 public class TranscriptService {
     private final TranscriptRepository transcriptRepo;
     private final MediaRepository mediaRepo;
+    private final ObjectMapper om;
 
 
-    public TranscriptService(TranscriptRepository transcriptRepo, MediaRepository mediaRepo) {
+    public TranscriptService(TranscriptRepository transcriptRepo, MediaRepository mediaRepo, ObjectMapper om) {
         this.transcriptRepo = transcriptRepo;
         this.mediaRepo = mediaRepo;
+        this.om = om;
     }
     private static String nlw(String s, String def) {
         return (s == null || s.isBlank()) ? def : s.toLowerCase(Locale.ROOT);
@@ -34,34 +41,40 @@ public class TranscriptService {
 
     @Transactional
     public UUID upsert(UUID mediaId, TranscriptionEngine.Result res) {
-        Media media = mediaRepo.findById(mediaId).orElseThrow();
+        Media media = mediaRepo.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
 
         String lang     = nlw(res.lang(), "auto");
         String provider = nlw(res.provider(), "unknown");
 
         Transcript transcript = transcriptRepo
                 .findByMediaAndLangAndProvider(media,lang,provider)
-                .orElseGet(() -> new Transcript(media, res.lang(), res.provider()));
+                .orElseGet(() -> new Transcript(media, lang, provider));
 
         transcript.setMedia(media);
-        transcript.setLang(res.lang() != null ? res.lang() : "auto");
-        transcript.setProvider(res.provider() != null ? res.provider() : "unknown");
+        transcript.setLang(lang);
+        transcript.setProvider(provider);
         transcript.setText(res.text() != null ? res.text() : "");
 
         // Words -> JSON document
         List<Map<String, Object>> items = (res.words() == null) ? List.of()
                 : res.words().stream().map(w -> {
+                    long s = Math.max(0, w.startMs());
+                    long e = Math.max(s, w.endMs());
             Map<String,Object> m = new LinkedHashMap<>();
-            m.put("startMs", w.startMs());
-            m.put("endMs",   w.endMs());
+            m.put("startMs", s);
+            m.put("endMs",   e);
             m.put("text",    w.text());
             return m;
-        }).toList();
+        }).sorted(Comparator.comparingLong(m -> (Long)m.get("startMs")))
+                .toList();
 
         // >>> Gebruik een MUTABLE map i.p.v. Map.of(...)
         Map<String, Object> wordsDoc = new LinkedHashMap<>();
         wordsDoc.put("schema", "v1");
         wordsDoc.put("generatedAt", java.time.Instant.now().toString());
+        wordsDoc.put("lang", lang);
+        wordsDoc.put("provider", provider);
         wordsDoc.put("items", items);
 
         // >>> Meta uit Result heet 'meta', niet 'metadata'
@@ -70,11 +83,16 @@ public class TranscriptService {
             wordsDoc.put("segments", segs);
             wordsDoc.put("diarizeProvider", res.provider());
         }
-
-        transcript.setWords(wordsDoc);
-
-        transcriptRepo.save(transcript);
-        return transcript.getId();
+        JsonNode wordsNode = om.valueToTree(wordsDoc);
+        transcript.setWords(wordsNode);
+        try {
+            transcriptRepo.save(transcript);
+            return transcript.getId();
+        } catch (DataIntegrityViolationException dup) {
+            // unique (media,lang,provider) – race safe
+            return transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider)
+                    .orElseThrow().getId();
+        }
     }
 
 

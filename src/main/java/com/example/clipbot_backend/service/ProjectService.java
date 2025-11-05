@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -65,8 +66,14 @@ public class ProjectService {
         return createProject(owner, req.title(), req.templateId());
     }
 
-    /* ---------- READ ---------- */
+    @Transactional
+    public Project createProjectBySubject(String subject, String title, UUID templateId) {
+        var owner = accountService.ensureByExternalSubject(subject, null);
+        return createProject(owner, title, templateId);
+    }
 
+    /* ---------- READ ---------- */
+    @Transactional(readOnly = true)
     public Page<Project> listProjects(UUID ownerId, Pageable pageable) {
         var owner = accountService.getByIdOrThrow(ownerId);
         return projectRepository.findByOwnerOrderByCreatedAtDesc(owner, pageable);
@@ -82,6 +89,7 @@ public class ProjectService {
         var owner = accountService.getByIdOrThrow(ownerId);
         return ensureProjectOwnedBy(projectId, owner);
     }
+    @Transactional(readOnly = true)
     public Project get(UUID projectId) {
         return projectRepository.findById(projectId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND"));
@@ -124,12 +132,20 @@ public class ProjectService {
         return projectMediaRepository.save(link);
     }
 
-
-    public List<ProjectMediaLink> listProjectMedia(UUID projectId, UUID ownerId) {
+    @Transactional(readOnly = true)
+    public List<ProjectMediaView> listProjectMedia(UUID projectId, UUID ownerId) {
         var owner = accountService.getByIdOrThrow(ownerId);
         var project = ensureProjectOwnedBy(projectId, owner);
-        return projectMediaRepository.findByProject(project);
+        return projectMediaRepository.findByProjectOrderByCreatedAtDesc(project)
+                .stream()
+                .map(pm -> new ProjectMediaView(
+                        pm.getMedia().getId(),
+                        pm.getMedia().getPlatform(),
+                        pm.getMedia().getExternalUrl(),
+                        pm.getCreatedAt()))
+                .toList();
     }
+    public record ProjectMediaView(UUID mediaId, String platform, String externalUrl, Instant linkedAt) {}
 
     /* ---------- CLIPS ---------- */
 

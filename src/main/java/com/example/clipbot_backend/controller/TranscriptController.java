@@ -7,7 +7,11 @@ import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.TranscriptService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -22,27 +26,38 @@ public class TranscriptController {
     private final TranscriptService transcriptService;
     private final TranscriptRepository transcriptRepo;
     private final MediaRepository mediaRepo;
+    private final ObjectMapper om; //
 
-    public TranscriptController(TranscriptService transcriptService, TranscriptRepository transcriptRepo, MediaRepository mediaRepo) {
+    public TranscriptController(TranscriptService transcriptService, TranscriptRepository transcriptRepo, MediaRepository mediaRepo, ObjectMapper om) {
         this.transcriptService = transcriptService;
         this.transcriptRepo = transcriptRepo;
         this.mediaRepo = mediaRepo;
+        this.om = om;
+    }
+    private ObjectNode emptyWords() {
+        ObjectNode o = om.createObjectNode();
+        o.put("schema", "v1");
+        o.putArray("items"); // lege array
+        return o;
     }
 
     @GetMapping("/{id}")
-    public TranscriptResponse getById(@PathVariable UUID id) {
+    public TranscriptResponse getById(@PathVariable UUID id,@RequestParam String ownerExternalSubject) {
         Transcript t = transcriptRepo.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transcript not found: " + id));
+        ensureOwnedBy(t.getMedia(), ownerExternalSubject);
         return toDto(t);
     }
 
     @GetMapping
     public TranscriptResponse getByKeys(@RequestParam UUID mediaId,
                                         @RequestParam String lang,
-                                        @RequestParam String provider) {
+                                        @RequestParam String provider,
+                                        @RequestParam String ownerExternalSubject) {
         Media media = mediaRepo.findById(mediaId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Media not found: " + mediaId));
-        Transcript t = transcriptRepo.findByMediaAndLangAndProvider(media,lang,"openai")
+        ensureOwnedBy(media, ownerExternalSubject);
+        Transcript t = transcriptRepo.findByMediaAndLangAndProvider(media,lang,provider)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Transcript not found for media=" + mediaId + ", lang=" + lang + ", provider=" + provider));
         return toDto(t);
@@ -50,10 +65,12 @@ public class TranscriptController {
 
     /** Handig voor UI: pak het nieuwste transcript voor een media. */
     @GetMapping("/by-media/{mediaId}")
-    public List<TranscriptResponse> listByMedia(@PathVariable UUID mediaId) {
+    public List<TranscriptResponse> listByMedia(@PathVariable UUID mediaId, @RequestParam String ownerExternalSubject, @RequestParam(required = false, defaultValue = "10") int limit) {
         Media media = mediaRepo.findById(mediaId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Media not found: " + mediaId));
-        return transcriptRepo.findAllByMedia(media).stream().map(this::toDto).collect(Collectors.toList());
+        ensureOwnedBy(media, ownerExternalSubject);
+        return transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media)
+                .stream().map(this::toDto).toList();
     }
 
     @PutMapping
@@ -63,17 +80,24 @@ public class TranscriptController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Media not found: " + request.mediaId()));
 
         // words in elk gangbaar schema ondersteunen
-        List<TranscriptionEngine.Word> words = extractWords(request.words());
+        List<TranscriptionEngine.Word> words = extractWords(request.words()).stream().map(w -> new TranscriptionEngine.Word(
+                        Math.max(0L, w.startMs()),
+                        Math.max(Math.max(0L, w.startMs()), w.endMs()),
+                        w.text() == null ? "" : w.text()))
+                .sorted(Comparator.comparingLong(TranscriptionEngine.Word::startMs)).toList();
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("schema", detectSchema(request.words()));
         metadata.put("source", "api-upsert"); // trace
 
+        String lang = request.lang() == null ? "auto" : request.lang().toLowerCase(Locale.ROOT);
+        String provider = request.provider() == null ? "unknown" : request.provider().toLowerCase(Locale.ROOT);
+
         TranscriptionEngine.Result result = new TranscriptionEngine.Result(
                 Optional.ofNullable(request.text()).orElse(""),
                 words,
-                request.lang(),
-                request.provider(),
+                lang,
+                provider,
                 metadata
         );
         UUID id = transcriptService.upsert(request.mediaId(), result);
@@ -83,13 +107,14 @@ public class TranscriptController {
     // ---------- helpers ----------
 
     private TranscriptResponse toDto(Transcript t) {
+        JsonNode words = (t.getWords() != null) ? t.getWords() : emptyWords();
         return new TranscriptResponse(
                 t.getId(),
                 t.getMedia().getId(),
                 t.getLang(),
                 t.getProvider(),
                 Optional.ofNullable(t.getText()).orElse(""),
-                Optional.ofNullable(t.getWords()).orElseGet(() -> Map.of("schema","v1","items", List.of())),
+                words,
                 Optional.ofNullable(t.getCreatedAt()).orElse(Instant.EPOCH),
                 t.getVersion()
         );
@@ -131,6 +156,14 @@ public class TranscriptController {
         // fallback: geen herkenbaar schema
         return List.of();
     }
+    private static ObjectNode emptyWordsStatic() {
+        var f = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+        var o = f.objectNode();
+        o.put("schema", "v1");
+        o.set("items", f.arrayNode());
+        return o;
+    }
+
 
     @SuppressWarnings("unchecked")
     private static List<TranscriptionEngine.Word> toWordListFromList(List<?> rawList) {
@@ -170,5 +203,10 @@ public class TranscriptController {
             if (((Map<String,Object>) m).containsKey("segments")) return "map.segments";
         }
         return "unknown";
+    }
+    private void ensureOwnedBy(Media media, String subject) {
+        String ownerSub = media.getOwner().getExternalSubject();
+        if (!Objects.equals(ownerSub, subject))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
     }
 }

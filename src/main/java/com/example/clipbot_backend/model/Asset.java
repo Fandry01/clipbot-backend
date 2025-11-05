@@ -87,9 +87,9 @@ public class Asset {
     { return sizeBytes; }
     public void setSizeBytes(long sizeBytes)
     { this.sizeBytes = sizeBytes; }
-    public String getChecksum()
+    public String getCheckSum()
     { return checkSum; }
-    public void setChecksum(String checkSum)
+    public void setCheckSum(String checkSum)
     { this.checkSum = checkSum; }
     public Instant getCreatedAt()
     { return createdAt; }

@@ -88,8 +88,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         boolean audioOnly = probablyAudioOnly(inputFile);
 
         // Defaults voor canvas / schaal
-        int W = orDefault(width, 1920);
-        int H = orDefault(height, 1080);
+        int W = orDefault(width, 1920); if ((W & 1) == 1) W++;
+        int H = orDefault(height, 1080); if ((H & 1) == 1) H++;
         int FPS = orDefault(fps, 30);
         int targetCrf = orDefault(crf, 18);
         String targetPreset = (preset != null && !preset.isBlank()) ? preset : "medium";
@@ -98,6 +98,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegBin);
         cmd.add("-y");
+        cmd.add("-force_key_frames"); cmd.add("expr:gte(t,0)");
 
 
 
@@ -106,8 +107,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
         if (!audioOnly) {
             // ======== VIDEO+AUDO BRON ========
+            cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0)); // ← vóór -i audio
             cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());
-            cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
 
             // subtitles burn-in (optioneel)
             if (subs != null && subs.srtKey() != null && !subs.srtKey().isBlank()) {
@@ -138,20 +139,20 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         } else {
             // ======== AUDIO-ONLY BRON → ZWARTE CANVAS + AUDIO ========
             // Eerst de canvas als video (input #0)
-            cmd.add("-f");   cmd.add("lavfi");
-            cmd.add("-i");   cmd.add("color=color=black:size=" + W + "x" + H + ":rate=" + FPS);
+            cmd.add("-f"); cmd.add("lavfi");
+            cmd.add("-i"); cmd.add("color=color=black:size=" + W + "x" + H + ":rate=" + FPS);
 
             // Dan de audio als tweede input (input #1)
+            cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
             cmd.add("-i");   cmd.add(inputFile.toAbsolutePath().toString());
 
             // subtitles burn-in kan hier óók (we hebben nu een video canvas)
-            if (subs != null && subs.srtKey() != null && !subs.srtKey().isBlank()) {
+            if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
-                if (srtPath != null) {
-                    vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toAbsolutePath().toString()));
-                }
+                if (srtPath != null) vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toString()));
             }
-
+            vf = appendFilter(vf, "scale=" + W + ":" + H + ":force_original_aspect_ratio=decrease");
+            vf = appendFilter(vf, "pad=" + W + ":" + H + ":(ow-iw)/2:(oh-ih)/2");
             if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
 
             // Kies expliciet mapping: video van input 0 (canvas), audio van input 1 (bron)

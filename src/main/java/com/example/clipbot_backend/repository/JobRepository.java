@@ -6,6 +6,7 @@ import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -13,9 +14,6 @@ import java.util.UUID;
 public interface JobRepository extends JpaRepository<Job, UUID> {
     long countByStatus(JobStatus status);
 
-    // -------- Safe pick pattern (Postgres) ----------
-
-    // 1) Selecteer 1 job met SKIP LOCKED
     @Query(value = """
         SELECT id FROM job
         WHERE status = 'QUEUED'
@@ -25,20 +23,44 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
         """, nativeQuery = true)
     Optional<UUID> selectOneQueuedIdForUpdate();
 
-    // 2) Markeer RUNNING
     @Modifying
     @Transactional
-    @Query(value = "UPDATE job SET status = 'RUNNING', updated_at = now(), attempts = attempts + 1 WHERE id = :id", nativeQuery = true)
-    int markRunning(UUID id);
+    @Query(value = """
+        UPDATE job
+           SET status = 'RUNNING',
+               updated_at = now(),
+               attempts = COALESCE(attempts,0) + 1
+         WHERE id = :id
+           AND status = 'QUEUED'
+        """, nativeQuery = true)
+    int markRunning(@Param("id") UUID id);
 
-    // 3) Handige helpers
     @Modifying @Transactional
-    @Query(value = "UPDATE job SET status = 'DONE', updated_at = now(), result = CAST(:resultJson AS jsonb) WHERE id = :id", nativeQuery = true)
-    int markDone(UUID id, String resultJson);
+    @Query(value = """
+        UPDATE job
+           SET status = 'DONE',
+               updated_at = now(),
+               result = CAST(:resultJson AS jsonb)
+         WHERE id = :id
+        """, nativeQuery = true)
+    int markDone(@Param("id") UUID id, @Param("resultJson") String resultJson);
 
     @Modifying @Transactional
-    @Query(value = "UPDATE job SET status = 'ERROR', updated_at = now(), result = CAST(:errorJson AS jsonb) WHERE id = :id", nativeQuery = true)
-    int markError(UUID id, String errorJson);
+    @Query(value = """
+        UPDATE job
+           SET status = 'ERROR',
+               updated_at = now(),
+               result = CAST(:errorJson AS jsonb)
+         WHERE id = :id
+        """, nativeQuery = true)
+    int markError(@Param("id") UUID id, @Param("errorJson") String errorJson);
+
+    // ---- Dedup (optioneel) ----
+    @Query(value = """
+        SELECT * FROM job
+         WHERE dedup_key = :dedupKey
+           AND status IN ('QUEUED','RUNNING')
+         LIMIT 1
+        """, nativeQuery = true)
+    Optional<Job> findQueuedOrRunningByDedupKey(@Param("dedupKey") String dedupKey);
 }
-
-

@@ -5,14 +5,19 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.*;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 
 @Service
@@ -25,6 +30,7 @@ public class FileService {
     /** Streamt bestanden uit "out" (clips/subs/thumbs) met byte-range (seek). */
     public ResponseEntity<Resource> streamOut(String objectKey,
                                               String rangeHeader,
+                                              @Nullable String ifNoneMatch,
                                               boolean download) throws IOException {
         if (objectKey == null || objectKey.isBlank()) {
             return ResponseEntity.badRequest().build();
@@ -32,51 +38,75 @@ public class FileService {
 
         Path file = storage.resolveOut(objectKey);
         if (!Files.exists(file)) throw notFound("out", objectKey);
-        assertInside(storage.resolveOut(""), file);
+        assertInside(storage.rootOut(), file);
+
+        FileSystemResource resource = new FileSystemResource(file);
+        long length  = resource.contentLength();
+        long lastMod = Files.getLastModifiedTime(file).toMillis();
+
+        // Simpele sterke ETag: "lastMod-length"
+        String etag = "\"" + lastMod + "-" + length + "\"";
 
         MediaType contentType = guessType(file);
-        FileSystemResource resource = new FileSystemResource(file);
-        long length = resource.contentLength();
 
-        var disp = (download ? "attachment" : "inline") + "; filename=" + file.getFileName();
-        var cacheCtl = CacheControl.maxAge(java.time.Duration.ofHours(1)).cachePublic();
+        String fn = file.getFileName().toString();
+        String cdType = download ? "attachment" : "inline";
+        String cd = cdType + "; filename=\"" + fn + "\"; filename*=UTF-8''" + URLEncoder.encode(fn, StandardCharsets.UTF_8);
+
+        CacheControl cacheCtl = chooseCache(fn);
+
+        // 304-handling alleen voor non-range
+        if ((rangeHeader == null || rangeHeader.isBlank()) && ifNoneMatch != null && !ifNoneMatch.isBlank()) {
+            // Kan meerdere etags bevatten, dus 'contains' is prima hier
+            if (ifNoneMatch.contains(etag)) {
+                return ResponseEntity.status(HttpStatus.NOT_MODIFIED)
+                        .eTag(etag)
+                        .lastModified(lastMod)
+                        .cacheControl(cacheCtl)
+                        .build();
+            }
+        }
 
         if (rangeHeader == null || rangeHeader.isBlank()) {
             // 200 OK (volledig)
             return ResponseEntity.ok()
-                    .cacheControl(cacheCtl)
+                    .cacheControl(cacheCtl).eTag(etag).lastModified(lastMod)
                     .contentType(contentType)
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, disp)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, cd)
                     .contentLength(length)
                     .body(resource);
         }
 
         // 206 Partial Content
-        var ranges = HttpRange.parseRanges(rangeHeader);
-        var r = ranges.get(0);
+        HttpRange r = HttpRange.parseRanges(rangeHeader).get(0);
         long start = r.getRangeStart(length);
         long end   = r.getRangeEnd(length);
+        if (start >= length) {
+            return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes */" + length).build();
+        }
         if (end < start) end = length - 1;
         long rangeLen = end - start + 1;
 
         InputStream is = Files.newInputStream(file);
-        if (start > 0) is.skip(start);
+        long toSkip = start, skipped;
+        while (toSkip > 0 && (skipped = is.skip(toSkip)) > 0) toSkip -= skipped;
+
         InputStreamResource slice = new InputStreamResource(is) {
             @Override public long contentLength() { return rangeLen; }
-            @Override public String getFilename() { return file.getFileName().toString(); }
+            @Override public String getFilename() { return fn; }
         };
 
         return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                .cacheControl(cacheCtl)
+                .cacheControl(cacheCtl).eTag(etag).lastModified(lastMod)
                 .contentType(contentType)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + length)
-                .header(HttpHeaders.CONTENT_DISPOSITION, disp)
+                .header(HttpHeaders.CONTENT_DISPOSITION, cd)
                 .contentLength(rangeLen)
                 .body(slice);
     }
-
     public ResponseEntity<FileSystemResource> downloadOut(String objectKey) throws IOException {
         Path file = storage.resolveOut(objectKey);
         if (!Files.exists(file)) throw notFound("out", objectKey);
@@ -123,5 +153,31 @@ public class FileService {
 
     private static String attachment(Path file) {
         return "attachment; filename=\"" + file.getFileName() + "\"";
+    }
+    private CacheControl chooseCache(String filename) {
+        String ext = "";
+        int dot = filename.lastIndexOf('.');
+        if (dot >= 0 && dot < filename.length() - 1) {
+            ext = filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+        }
+        switch (ext) {
+            case "mp4":
+            case "webm":
+            case "m4a":
+            case "mp3":
+            case "wav":
+            case "jpg":
+            case "jpeg":
+            case "png":
+            case "gif":
+            case "webp":
+            case "vtt":
+            case "srt":
+                // 1 jaar, public, immutable
+                return CacheControl.maxAge(365, TimeUnit.DAYS).cachePublic().immutable();
+            default:
+                // dynamischer spul
+                return CacheControl.noCache();
+        }
     }
 }

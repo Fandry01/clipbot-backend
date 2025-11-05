@@ -36,7 +36,10 @@ public class FasterWhisperTranscriptionEngine implements TranscriptionEngine {
                 for (var w : resp.words()) {
                     long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
                     long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
-                    words.add(new Word(s, e, safeTrim(w.word())));
+                    s = Math.max(0L, s);
+                    e = Math.max(s, e);
+                    String t = safeTrim(w.word());
+                    if (!t.isEmpty()) words.add(new Word(s, e, t));
                 }
             } else if (resp.segments() != null) {
                 for (var seg : resp.segments()) {
@@ -44,7 +47,10 @@ public class FasterWhisperTranscriptionEngine implements TranscriptionEngine {
                     for (var w : seg.words()) {
                         long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
                         long e = w.end()   == null ? s  : Math.round(w.end()   * 1000);
-                        words.add(new Word(s, e, safeTrim(w.word())));
+                        s = Math.max(0L, s);
+                        e = Math.max(s, e);
+                        String t = safeTrim(w.word());
+                        if (!t.isEmpty()) words.add(new Word(s, e, t));
                     }
                 }
             }
@@ -57,8 +63,35 @@ public class FasterWhisperTranscriptionEngine implements TranscriptionEngine {
 
         String text = resp == null || resp.text() == null ? "" : resp.text().strip();
 
-        return new Result(text, words, lang, "FW",
-                Map.of("source","faster-whisper","schema","verbose_json"));
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("source", "faster-whisper");
+        meta.put("schema", "verbose_json");
+        if (resp != null && resp.segments() != null) {
+            // Plain Jackson-mappable list (geen records nodig)
+            List<Map<String,Object>> segs = new ArrayList<>(resp.segments().size());
+            for (var s : resp.segments()) {
+                Map<String,Object> m = new LinkedHashMap<>();
+                m.put("start", s.start());
+                m.put("end",   s.end());
+                m.put("text",  s.text());
+                // woorden binnen segment (optioneel)
+                if (s.words() != null) {
+                    List<Map<String,Object>> wl = new ArrayList<>(s.words().size());
+                    for (var w : s.words()) {
+                        Map<String,Object> wm = new LinkedHashMap<>();
+                        wm.put("word",  w.word());
+                        wm.put("start", w.start());
+                        wm.put("end",   w.end());
+                        wl.add(wm);
+                    }
+                    m.put("words", wl);
+                }
+                segs.add(m);
+            }
+            meta.put("segments", segs);
+        }
+
+        return new Result(text, words, lang, "fw", meta);
     }
     private static String safeTrim(String s){ return s==null ? "" : s.trim(); }
 }

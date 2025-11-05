@@ -6,8 +6,10 @@ import com.example.clipbot_backend.util.ClipStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 public interface ClipRepository extends JpaRepository<Clip, UUID> {
@@ -15,4 +17,8 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
     Page<Clip> findByMediaAndStatusOrderByCreatedAtDesc(Media media, ClipStatus status, Pageable pageable);
     Page<Clip> findByMediaInOrderByCreatedAtDesc(Collection<Media> media, Pageable pageable);
     Page<Clip> findByMediaInAndStatusOrderByCreatedAtDesc(Collection<Media> media, ClipStatus status, Pageable pageable);
+    @Query("select c.status as status, count(c) as cnt from Clip c where c.media in :media group by c.status")
+    List<StatusCount> countByMediaInGroupByStatus(List<Media> media);
+    interface StatusCount { ClipStatus getStatus(); long getCnt(); }
+
 }

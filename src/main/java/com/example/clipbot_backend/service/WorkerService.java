@@ -10,6 +10,7 @@ import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
+import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.MediaStatus;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
@@ -226,7 +227,7 @@ void handleTranscribe(Job job) {
 
             // Registreer Assets
             var owner = media.getOwner();
-            Asset mp4 = new Asset(owner, AssetKind.CLIP_MP4, res.mp4Key(), res.mp4Size());
+            Asset mp4 = new Asset(owner, AssetKind.MP4, res.mp4Key(), res.mp4Size());
             mp4.setRelatedMedia(media);
             mp4.setRelatedClip(clip);
             assetRepo.save(mp4);

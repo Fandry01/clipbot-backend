@@ -32,9 +32,9 @@ public class Segment {
             foreignKey = @ForeignKey(name = "fk_segment_media"))
     private Media media;
     @Column(name = "start_ms", nullable = false)
-    private Long startMs;
+    private long startMs;
     @Column(name = "end_ms", nullable = false)
-    private Long endMs;
+    private long endMs;
     @Column(name = "score", precision = 6, scale = 3)
     private BigDecimal score;
 

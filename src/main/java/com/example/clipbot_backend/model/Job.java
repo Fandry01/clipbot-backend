@@ -6,6 +6,7 @@ import com.example.clipbot_backend.util.JobType;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
@@ -29,8 +30,7 @@ public class Job {
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "media_id",
-            foreignKey = @ForeignKey(name = "fk_job_media"))
+    @JoinColumn(name = "media_id", foreignKey = @ForeignKey(name = "fk_job_media"))
     private Media media;
 
     @Enumerated(EnumType.STRING)
@@ -38,13 +38,19 @@ public class Job {
     private JobType type;
 
     @Enumerated(EnumType.STRING)
-    private JobStatus status;
+    @Column(name = "status", nullable = false, length = 32)
+    private JobStatus status = JobStatus.QUEUED;
+
+    // For enqueueUnique
+    @Column(name = "dedup_key", length = 255)
+    private String dedupKey;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "payload")
-    private Map<String, Object>  payload;
+    @Column(name = "payload", columnDefinition = "jsonb")
+    private Map<String, Object> payload;
+
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "result")
+    @Column(name = "result", columnDefinition = "jsonb")
     private Map<String, Object> result;
 
     @Column(name = "attempts", nullable = false)
@@ -54,6 +60,8 @@ public class Job {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    // Use UpdateTimestamp so inserts also get a value (Hibernate sets it on insert/update)
+    @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
@@ -61,16 +69,17 @@ public class Job {
     @Column(name = "version", nullable = false)
     private long version;
 
-    @PreUpdate
-    void touch() { this.updatedAt = Instant.now(); }
-
     protected Job() {}
-
     public Job(JobType type) { this.type = type; }
 
-    // getters/setters ...
+    public UUID getId() {
+        return id;
+    }
 
-    public UUID getId() { return id; }
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
     public Media getMedia() {
         return media;
     }
@@ -93,6 +102,14 @@ public class Job {
 
     public void setStatus(JobStatus status) {
         this.status = status;
+    }
+
+    public String getDedupKey() {
+        return dedupKey;
+    }
+
+    public void setDedupKey(String dedupKey) {
+        this.dedupKey = dedupKey;
     }
 
     public Map<String, Object> getPayload() {
@@ -141,5 +158,12 @@ public class Job {
 
     public void setVersion(long version) {
         this.version = version;
+    }
+
+
+    @PrePersist
+    void prePersist() {
+        if (updatedAt == null) updatedAt = Instant.now();
+        if (status == null) status = JobStatus.QUEUED;
     }
 }

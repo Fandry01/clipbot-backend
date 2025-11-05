@@ -3,10 +3,12 @@ package com.example.clipbot_backend.model;
 import com.example.clipbot_backend.util.MediaStatus;
 import com.example.clipbot_backend.util.SpeakerMode;
 import jakarta.persistence.*;
+import jakarta.persistence.criteria.CriteriaBuilder;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.beans.Transient;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.Set;
@@ -34,7 +36,7 @@ public class Media {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32)
-    private MediaStatus status = MediaStatus.UPLOADED;
+    private MediaStatus status = MediaStatus.REGISTERED;
 
     @Column(name = "source", length = 1024)
     private String source;
@@ -47,7 +49,7 @@ public class Media {
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDate createdAt;
+    private Instant createdAt;
 
 
     @Column(name = "speaker_count_detected")
@@ -56,7 +58,7 @@ public class Media {
     @Enumerated(EnumType.STRING)
     private SpeakerMode speakerMode = AUTO;
 
-    public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, LocalDate createdAt) {
+    public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, Instant createdAt) {
         this.id = id;
         this.owner = owner;
         this.objectKey = objectKey;
@@ -111,11 +113,11 @@ public class Media {
         this.source = source;
     }
 
-    public LocalDate getCreatedAt() {
+    public Instant getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(LocalDate createdAt) {
+    public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
     }
 

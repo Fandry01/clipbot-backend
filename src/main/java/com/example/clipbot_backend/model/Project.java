@@ -24,8 +24,12 @@ public class Project {
     @Column(name = "title", nullable = false, length = 255)
     private String title;
 
-    @Column(name = "template_id")
+    @Column(name = "template_id", nullable = true)
     private UUID templateId;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -71,4 +75,21 @@ public class Project {
     public Instant getCreatedAt() {
         return createdAt;
     }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public long getVersion() {
+        return version;
+    }
+
+    public void setVersion(long version) {
+        this.version = version;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
 }
+

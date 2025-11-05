@@ -30,8 +30,10 @@ public class ClipAssembler {
                                 int maxCandidates) {
 
         List<Window> out = new ArrayList<>();
-        for (int i=0;i<sentences.size();i++) {
-            for (int j=i;j<sentences.size();j++) {
+        if (sentences.isEmpty()) return out;
+
+        for (int i = 0; i <sentences.size(); i++) {
+            for (int j = i; j<sentences.size(); j++) {
                 long s = sentences.get(i).startMs(), e = sentences.get(j).endMs(), d = e - s;
                 if (d < minMs) continue;
                 if (d > maxMs) break;
@@ -43,7 +45,11 @@ public class ClipAssembler {
                 if (eSnap>=0) e = eSnap;
 
                 var comp = scorer.scoreWindow(sentences.subList(i, j+1), targetLenSec, sigmaSec);
+                if (comp.overall() <= 0.0) continue;
+
                 out.add(new Window(i,j,s,e,comp.overall(), comp.toMeta()));
+
+                if (out.size() > maxCandidates * 10) break;
             }
         }
 

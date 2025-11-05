@@ -13,5 +13,7 @@ public interface TranscriptRepository extends JpaRepository<Transcript, UUID> {
     List<Transcript> findAllByMedia(Media media);
     Optional<Transcript> findTopByMediaOrderByCreatedAtDesc(Media media);
     boolean existsByMedia(Media media);
+    boolean existsByMediaId(UUID mediaId);
+
 
 }

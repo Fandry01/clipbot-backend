@@ -63,7 +63,7 @@ public class LocalStorageService implements StorageService {
             Files.createDirectories(targetFile.toAbsolutePath().getParent());
             Files.copy(src, targetFile, REPLACE_EXISTING);
         }catch (IOException e){
-            throw new StorageException("Downloaded failed: " +  objectKey, e);
+            throw new StorageException("Download failed from raw: " + objectKey + " -> " + targetFile, e);
         }
     }
     @Override
@@ -114,5 +114,7 @@ public class LocalStorageService implements StorageService {
             throw new StorageException("Delete failed: " + p, e);
         }
     }
+    @Override public Path rootRaw() { return rawDir; }
+    @Override public Path rootOut() { return outDir; }
 
 }

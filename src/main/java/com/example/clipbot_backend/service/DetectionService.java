@@ -11,10 +11,15 @@ import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.util.JobType;
+import com.example.clipbot_backend.util.MediaStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -46,32 +51,50 @@ public class DetectionService {
     }
 
     @Transactional
-    public List<SegmentDTO> runDetectNow(UUID mediaId, DetectNowOptions options) throws Exception{
-        Media media = mediaRepo.findById(mediaId).orElseThrow();
-        Transcript transcript = resolveTranscript(media, options.lang(), options.provider());
-        if(transcript == null) return List.of();
+    public List<SegmentDTO> runDetectNow(UUID mediaId, DetectNowOptions options) throws Exception {
+        Media media = mediaRepo.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+        media.setStatus(MediaStatus.PROCESSING);
+        mediaRepo.saveAndFlush(media);
 
-        DetectionParams params = buildParams(options);
-        Path srcPath = storageService.resolveRaw(media.getObjectKey());
+        try {
+            Transcript transcript = resolveTranscript(media, options.lang(), options.provider());
+            if (transcript == null) return List.of();
 
-        var segments = detectionEngine.detect(srcPath, transcript, params);
+            Path srcPath = storageService.resolveRaw(media.getObjectKey());
+            if (srcPath == null || !Files.exists(srcPath))
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "RAW_NOT_FOUND");
 
-        segmentRepo.deleteByMedia(media);
-        if(!segments.isEmpty()){
-            List<Segment> entities = new ArrayList<>(segments.size());
-            for (var s : segments) {
-                Segment e = new Segment(media, s.startMs(), s.endMs());
-                e.setScore(s.score() != null ? s.score() : BigDecimal.ZERO);
-                e.setMeta(s.meta() != null ? s.meta() : Map.of());
-                entities.add(e);
+            DetectionParams params = buildParams(options);
+            var detected = detectionEngine.detect(srcPath, transcript, params);
+
+            segmentRepo.deleteByMedia(media);
+            if (!detected.isEmpty()) {
+                List<Segment> entities = new ArrayList<>(detected.size());
+                for (var s : detected) {
+                    Segment e = new Segment(media, s.startMs(), s.endMs());
+                    e.setScore(Optional.ofNullable(s.score()).orElse(BigDecimal.ZERO));
+                    e.setMeta(s.meta() == null ? Map.of() : s.meta());
+                    entities.add(e);
+                }
+                segmentRepo.saveAll(entities);
             }
-            segmentRepo.saveAll(entities);
+
+            media.setStatus(MediaStatus.READY);
+            mediaRepo.save(media);
+
+            return detected;
+        } catch (Exception e) {
+            media.setStatus(MediaStatus.FAILED);
+            mediaRepo.save(media);
+            throw e;
         }
-        return  segments;
     }
-    public List<PersistedSegmentView> listSegments(UUID mediaId) {
+
+    public List<PersistedSegmentView> listSegments(UUID mediaId,int page, int size) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
-        return segmentRepo.findByMediaOrderByStartMsAsc(media).stream()
+        var pageable = PageRequest.of(page, size);
+        return segmentRepo.findByMediaOrderByStartMsAsc(media, pageable).stream()
                 .map(s -> new PersistedSegmentView(s.getStartMs(), s.getEndMs(),
                         s.getScore() != null ? s.getScore() : BigDecimal.ZERO,
                         s.getMeta() != null ? s.getMeta() : Map.of()))

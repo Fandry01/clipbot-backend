@@ -16,13 +16,16 @@ import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.JobStatus;
 import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.MediaStatus;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -32,13 +35,15 @@ public class UploadService {
     private final MediaRepository mediarepo;
     private final AssetRepository assetRepo;
     private final JobRepository jobRepo;
+    private final JobService jobService;
 
-    public UploadService(StorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo) {
+    public UploadService(StorageService storageService, AccountRepository accountRepo, MediaRepository mediarepo, AssetRepository assetRepo, JobRepository jobRepo, JobService jobService) {
         this.storageService = storageService;
         this.accountRepo = accountRepo;
         this.mediarepo = mediarepo;
         this.assetRepo = assetRepo;
         this.jobRepo = jobRepo;
+        this.jobService = jobService;
     }
 
     public UploadInitResponse init (UploadInitRequest req){
@@ -60,23 +65,22 @@ public class UploadService {
                                               MultipartFile file,
                                               String sourceLabel) throws Exception {
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("file is empty");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "FILE_EMPTY");
         }
         if (ownerExternalSubject == null || ownerExternalSubject.isBlank()) {
-            throw new IllegalArgumentException("ownerExternalSubject is required");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
         }
-        if (objectKey == null || objectKey.isBlank()) {
-            // fallback: users/{sub}/raw/{uuid}.mp4
-            objectKey = "users/" + ownerExternalSubject + "/raw/" + UUID.randomUUID() + ".mp4";
-        } else {
-            objectKey = objectKey.replace('\\', '/').replaceAll("^/+", "");
-        }
+        objectKey = (objectKey == null || objectKey.isBlank())
+                ? "users/" + ownerExternalSubject + "/raw/" + UUID.randomUUID() + ".mp4"
+                : objectKey.replace('\\','/').replaceAll("^/+","");
+        if (objectKey.contains(".."))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY");
         // 1) Ensure account
         var owner = accountRepo.findByExternalSubject(ownerExternalSubject).orElseGet(() -> accountRepo.save(new Account(ownerExternalSubject, ownerExternalSubject)));
 
         var media = new Media(owner, objectKey);
-        media.setSource(sourceLabel != null ? sourceLabel : "upload");
-        media.setStatus(MediaStatus.UPLOADING);
+        media.setSource(sourceLabel == null ? "upload" : sourceLabel.trim().toLowerCase());
+        media.setStatus(MediaStatus.REGISTERED);
         mediarepo.saveAndFlush(media);
         Path tmp = null;
         try {
@@ -84,6 +88,7 @@ public class UploadService {
             tmp = Files.createTempFile("upload-", ".bin");
             file.transferTo(tmp.toFile());
             long sizeBytes = Files.size(tmp);
+
             storageService.uploadToRaw(tmp, objectKey);
 
             // 3) Register asset
@@ -94,14 +99,7 @@ public class UploadService {
             media.setStatus(MediaStatus.UPLOADED);
             mediarepo.save(media);
 
-
-            // 5) Enqueue TRANSCRIBE job
-            var job = new Job(JobType.TRANSCRIBE);
-            job.setMedia(media);
-            job.setStatus(JobStatus.QUEUED);
-            job.setCreatedAt(Instant.now());
-            job.setUpdatedAt(Instant.now());
-            jobRepo.save(job);
+            jobService.enqueue(media.getId(), JobType.TRANSCRIBE, Map.of());
 
             return new UploadCompleteResponse(media.getId(), asset.getId(), objectKey, sizeBytes);
 

@@ -15,7 +15,7 @@ import java.util.UUID;
 public interface SegmentRepository extends JpaRepository<Segment, UUID> {
     @Query("select s from Segment s where s.media = :media order by s.score desc nulls last, s.createdAt desc")
     List<Segment> findTopByMediaOrderByScoreDesc(Media media, Pageable pageable);
-    List<Segment> findByMediaOrderByStartMsAsc(Media media);
+    Page<Segment> findByMediaOrderByStartMsAsc(Media media, Pageable pageable);
 
     Page<Segment> findByMedia(Media media, Pageable pageable);
     @Modifying

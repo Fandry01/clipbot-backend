@@ -4,6 +4,7 @@ import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.dto.FwVerboseResponse;
 import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
+import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
@@ -11,11 +12,14 @@ import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -44,164 +48,130 @@ public class DetectWorkflow {
         this.urlDownloader = urlDownloader;
     }
 
-    @Transactional
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
-        var media = mediaRepo.findById(mediaId).orElseThrow();
-
-        if (media.getStatus() != MediaStatus.PROCESSING) {
-            media.setStatus(MediaStatus.PROCESSING);
-            mediaRepo.save(media);
-        }
+        // TX A: kort
+        Media media = markProcessing(mediaId);
 
         try {
-            String lang = payload != null ? (String) payload.get("lang") : null;
-            String provider = payload != null ? (String) payload.get("provider") : null;
+            // --- No TX: IO / transcript ---
+            String lang = optStr(payload, "lang");
+            String provider = optStr(payload, "provider");
 
-            Optional<Transcript> trOpt =
-                    (lang != null && provider != null)
-                            ? transcriptRepo.findByMediaAndLangAndProvider(
-                            media, lang.toLowerCase(Locale.ROOT), provider.toLowerCase(Locale.ROOT))
-                            : transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media);
+            Transcript tr = resolveOrCreateTranscript(media, lang, provider); // zonder TX
 
-            // === Nieuw: maak transcript indien ontbreekt ===
-            Transcript tr = trOpt.orElseGet(() -> {
-                Path input;
-                String key = media.getObjectKey();
-
-                if (key == null || key.isBlank()) {
-                    throw new IllegalStateException("media.objectKey invalid: " + key);
-                }
-                String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
-                if ("url".equals(src)) {
-                    String external = Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source");
-                    input = urlDownloader.ensureRawObject(external, key); // <--- download naar data/raw/<key>
-                } else {
-                    input = storage.resolveRaw(key);
-                    if (!Files.exists(input)) {
-                        throw new IllegalStateException("raw input missing: " + input);
-                    }
-                }
-                var fw = fastWhisperClient.transcribeFile(input, true);
-
-                String detLang = (fw != null && fw.language() != null && !fw.language().isBlank())
-                        ? fw.language().toLowerCase(Locale.ROOT)
-                        : (lang == null ? "auto" : lang.toLowerCase(Locale.ROOT));
-
-                String prov = (provider == null || provider.isBlank())
-                        ? "fw" : provider.toLowerCase(Locale.ROOT);
-
-                String text = (fw == null || fw.text() == null) ? "" : fw.text().strip();
-
-                Transcript t = new Transcript(media, detLang, prov);
-                t.setText(text);
-
-                // Words JSON uit FW opbouwen (zelfde schema als in TranscriptService)
-                List<Map<String, Object>> items = new ArrayList<>();
-                if (fw != null) {
-                    if (fw.words() != null && !fw.words().isEmpty()) {
-                        for (var w : fw.words()) {
-                            Map<String, Object> m = new LinkedHashMap<>();
-                            long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
-                            long e = w.end() == null ? s : Math.round(w.end() * 1000);
-                            m.put("startMs", s);
-                            m.put("endMs", e);
-                            m.put("text", w.word() == null ? "" : w.word().trim());
-                            items.add(m);
-                        }
-                    } else if (fw.segments() != null) {
-                        for (var seg : fw.segments()) {
-                            if (seg.words() == null) continue;
-                            for (var w : seg.words()) {
-                                Map<String, Object> m = new LinkedHashMap<>();
-                                long s = w.start() == null ? 0L : Math.round(w.start() * 1000);
-                                long e = w.end() == null ? s : Math.round(w.end() * 1000);
-                                m.put("startMs", s);
-                                m.put("endMs", e);
-                                m.put("text", w.word() == null ? "" : w.word().trim());
-                                items.add(m);
-                            }
-                        }
-                    }
-                }
-                items.sort(Comparator.comparingLong(m -> (Long) m.get("startMs")));
-
-                Map<String, Object> wordsDoc = new LinkedHashMap<>();
-                wordsDoc.put("schema", "v1");
-                wordsDoc.put("generatedAt", Instant.now().toString());
-                wordsDoc.put("items", items);
-                t.setWords(wordsDoc);
-
-                return transcriptRepo.save(t);
-            });
-
-            // === Params
-            var srcPath = storage.resolveRaw(media.getObjectKey());
-            if (srcPath == null || !Files.exists(srcPath)) {
-                throw new IllegalStateException("Media file missing: " + srcPath);
-            }
-            var params = DetectionParams.defaults().withMaxCandidates(8);
-
-            Double sceneTh = parseDouble(payload, "sceneThreshold");
-            if (sceneTh != null && sceneTh > 0) {
-                params = new DetectionParams(
-                        params.minDurationMs(), params.maxDurationMs(), params.maxCandidates(),
-                        params.silenceNoiseDb(), params.silenceMinDurSec(), params.snapThresholdMs(),
-                        params.targetLenSec(), params.lenSigmaSec(),
-                        sceneTh, params.snapSceneMs(), params.sceneAlignBonus()
-                );
-            }
-
-            // === Detect
+            Path srcPath = requireRaw(media.getObjectKey());
+            DetectionParams params = buildParams(payload);
             var detected = detection.detect(srcPath, tr, params);
 
-            // === Refine
-            long pad = 500;
-            long MAX_SLICE_MS = 60_000;
-            List<SegmentDTO> refined = new ArrayList<>(detected.size());
+            var refined = refineWithWordBounds(srcPath, detected);
 
-            for (var s : detected) {
-                long start = s.startMs();
-                long end = Math.min(s.endMs(), start + MAX_SLICE_MS);
+            // TX B: segments persist (REQUIRES_NEW)
+            persistSegments(media.getId(), refined);
 
-                var win = audioWindowService.sliceToTempWav(srcPath, start, end, pad);
-                try {
-                    var fw = fastWhisperClient.transcribeFile(win.file(), true);
-                    var snapped = snapToWordBounds(s, fw, win.offsetMs());
-                    refined.add(snapped);
-                } finally {
-                    try {
-                        Files.deleteIfExists(win.file());
-                    } catch (Exception ignore) {
-                    }
-                }
-            }
-
-            // === Opslaan (idempotent)
-            segmentRepo.deleteByMedia(media); // <-- Zorg dat deze methode bestaat in je repo
-            if (!refined.isEmpty()) {
-                var toSave = new ArrayList<Segment>(refined.size());
-                for (var s : refined) {
-                    var seg = new Segment(media, s.startMs(), s.endMs());
-                    seg.setScore(s.score());
-                    seg.setMeta(s.meta());
-                    toSave.add(seg);
-                }
-                segmentRepo.saveAll(toSave);
-            }
-            media.setStatus(MediaStatus.PROCESSED);
-            mediaRepo.save(media);
-
+            // TX C: media status blijft PROCESSING (render zet READY)
             return refined.size();
 
         } catch (Exception e) {
-            try {
-                media.setStatus(MediaStatus.FAILED);
-                mediaRepo.save(media);
-            } catch (Exception ignore) {}
-                throw e;
-            }
+            // TX C: failed (REQUIRES_NEW)
+            markFailed(mediaId, e);
+            throw e;
+        }
+    }
+    @Transactional
+    protected Media markProcessing(UUID mediaId) {
+        var media = mediaRepo.findById(mediaId).orElseThrow();
+        if (media.getStatus() != MediaStatus.PROCESSING) {
+            media.setStatus(MediaStatus.PROCESSING);
+            mediaRepo.saveAndFlush(media);
+        }
+        return media;
     }
 
+    protected Transcript resolveOrCreateTranscript(Media media, String lang, String provider) throws Exception {
+        // 1) Neem het nieuwste transcript indien aanwezig
+        Transcript existing = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
+        if (existing != null) return existing;
+
+        // 2) Anders: garandeer RAW input (bij URL evt. downloaden)
+        Path raw = requireRaw(media.getObjectKey());
+
+        // 3) Snelle transcript (faster-whisper) — provider-hint negeren voor nu
+        FwVerboseResponse fw = fastWhisperClient.transcribeFile(raw, true);
+
+        // 4) Converteer naar jouw model en persisteren via TranscriptService… (je hebt hier alleen repo)
+        //   Omdat je hier geen TranscriptService injecuteert, maken we een Transcript entity direct:
+        Transcript t = new Transcript();
+        t.setMedia(media);
+        t.setLang(  fw != null && fw.language()!=null ? fw.language().toLowerCase(Locale.ROOT) : defaultLang(lang));
+        t.setProvider("fw"); // of "FW" – kies consistentie met elders
+        t.setText( fw != null && fw.text()!=null ? fw.text().strip() : "" );
+        t.setWords( toWordsJson(fw) ); // JsonNode met schema “verbose_json” of vergelijkbaar
+        return transcriptRepo.save(t);
+    }
+
+
+
+
+    private String defaultLang(String hint) {
+        return hint == null || hint.isBlank() ? "auto" : hint.toLowerCase(Locale.ROOT);
+    }
+
+    protected Path requireRaw(String objectKey) throws Exception {
+        if (objectKey == null || objectKey.isBlank())
+            throw new IllegalStateException("objectKey missing on media");
+        Path raw = storage.resolveRaw(objectKey);
+        if (!Files.exists(raw)) throw new IllegalStateException("RAW missing: " + raw);
+        return raw;
+    }
+    protected DetectionParams buildParams(Map<String,Object> payload) {
+        if (payload == null) return DetectionParams.defaults();
+
+        long minMs   = asLong(payload.get("minDurationMs"),   10_000);
+        long maxMs   = asLong(payload.get("maxDurationMs"),   60_000);
+        int  maxCand = asInt (payload.get("maxCandidates"),   8);
+
+        double silDb   = asDbl(payload.get("silenceNoiseDb"),   -35.0);
+        double silMin  = asDbl(payload.get("silenceMinDurSec"), 0.5);
+        long   snapMs  = asLong(payload.get("snapThresholdMs"), 400);
+
+        double target  = asDbl(payload.get("targetLenSec"),   30.0);
+        double sigma   = asDbl(payload.get("lenSigmaSec"),    10.0);
+
+        double sceneT  = asDbl(payload.get("sceneThreshold"), 0.4);
+        long   snapSc  = asLong(payload.get("snapSceneMs"),   400);
+        double scBonus = asDbl(payload.get("sceneAlignBonus"),0.12);
+
+        return new DetectionParams(
+                minMs, maxMs, maxCand,
+                silDb, silMin, snapMs,
+                target, sigma,
+                sceneT, snapSc, scBonus
+        );
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected void persistSegments(UUID mediaId, List<SegmentDTO> refined) {
+        var media = mediaRepo.getReferenceById(mediaId);
+        segmentRepo.deleteByMedia(media);
+        if (!refined.isEmpty()) {
+            var entities = new ArrayList<Segment>(refined.size());
+            for (var s : refined) {
+                var e = new Segment(media, s.startMs(), s.endMs());
+                e.setScore(s.score() == null ? BigDecimal.ZERO : s.score());
+                e.setMeta(s.meta() == null ? Map.of() : s.meta());
+                entities.add(e);
+            }
+            segmentRepo.saveAll(entities);
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected void markFailed(UUID mediaId, Exception e) {
+        var media = mediaRepo.findById(mediaId).orElseThrow();
+        media.setStatus(MediaStatus.FAILED);
+        mediaRepo.save(media);
+        LOGGER.warn("Detect failed media={} err={}", mediaId, e.toString());
+    }
 
 
 
@@ -211,6 +181,39 @@ public class DetectWorkflow {
         if (v instanceof Number n) return n.doubleValue();
         if (v != null) try { return Double.parseDouble(v.toString()); } catch (Exception ignore) {}
         return null;
+    }
+    private JsonNode toWordsJson(FwVerboseResponse fw) {
+        if (fw == null) return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        var f = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+        var root = f.objectNode();
+        root.put("schema", "fw.verbose_json");
+        var items = f.arrayNode();
+
+        // eerst root.words
+        if (fw.words()!=null) {
+            for (var w : fw.words()) {
+                var n = f.objectNode();
+                n.put("text", w.word()==null ? "" : w.word());
+                n.put("start", w.start()==null ? 0.0 : w.start());
+                n.put("end",   w.end()==null   ? (w.start()==null?0.0:w.start()) : w.end());
+                items.add(n);
+            }
+        }
+        // dan segments[].words (fallback/aanvulling)
+        else if (fw.segments()!=null) {
+            for (var s : fw.segments()) {
+                if (s.words()==null) continue;
+                for (var w : s.words()) {
+                    var n = f.objectNode();
+                    n.put("text", w.word()==null ? "" : w.word());
+                    n.put("start", w.start()==null ? 0.0 : w.start());
+                    n.put("end",   w.end()==null   ? (w.start()==null?0.0:w.start()) : w.end());
+                    items.add(n);
+                }
+            }
+        }
+        root.set("items", items);
+        return root;
     }
 
     private SegmentDTO snapToWordBounds(SegmentDTO seg, FwVerboseResponse fw, long offsetMs) {
@@ -234,6 +237,60 @@ public class DetectWorkflow {
         meta.put("refined", true);
         meta.put("offsetMs", offsetMs);
         return new SegmentDTO(bestS, bestE, seg.score(), meta);
+    }
+
+    // in DetectWorkflow
+    private List<SegmentDTO> refineWithWordBounds(Path srcPath, List<SegmentDTO> detected) {
+        if (detected == null || detected.isEmpty()) return detected;
+
+        final long PAD_MS = 300; // beetje context rond het segment
+        List<SegmentDTO> out = new ArrayList<>(detected.size());
+
+        for (SegmentDTO seg : detected) {
+            AudioWindowService.Window win = null;
+            try {
+                // ✂️ maak tijdelijke WAV rond het segment
+                win = audioWindowService.sliceToTempWav(srcPath, seg.startMs(), seg.endMs(), PAD_MS);
+
+                // ⏱️ snelle woord-timestamps op het window
+                FwVerboseResponse fw = fastWhisperClient.transcribeFile(win.file(), true);
+
+                // 🎯 schuif grenzen naar dichtstbijzijnde woordranden
+                SegmentDTO refined = snapToWordBounds(seg, fw, win.offsetMs());
+                out.add(refined);
+            } catch (Exception e) {
+                // als refinement faalt, neem dan het originele segment
+                out.add(seg);
+            } finally {
+                if (win != null) {
+                    try { java.nio.file.Files.deleteIfExists(win.file()); } catch (Exception ignore) {}
+                }
+            }
+        }
+        return out;
+    }
+
+    private static long asLong(Object v, long def) {
+        if (v instanceof Number n) return n.longValue();
+        if (v != null) try { return Long.parseLong(v.toString()); } catch (Exception ignore) {}
+        return def;
+    }
+    private static int asInt(Object v, int def) {
+        if (v instanceof Number n) return n.intValue();
+        if (v != null) try { return Integer.parseInt(v.toString()); } catch (Exception ignore) {}
+        return def;
+    }
+    private static double asDbl(Object v, double def) {
+        if (v instanceof Number n) return n.doubleValue();
+        if (v != null) try { return Double.parseDouble(v.toString()); } catch (Exception ignore) {}
+        return def;
+    }
+    private static String optStr(Map<String,Object> m, String k) {
+        if (m == null) return null;
+        Object v = m.get(k);
+        if (v == null) return null;
+        String s = v.toString().trim();
+        return s.isEmpty() ? null : s.toLowerCase(Locale.ROOT);
     }
 
 }

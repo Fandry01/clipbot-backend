@@ -6,7 +6,10 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.Instant;
 
 @Entity
-@Table(name = "project_media")
+@Table(name = "project_media",indexes = {
+        @Index(name="idx_pm_project", columnList="project_id"),
+        @Index(name="idx_pm_media",   columnList="media_id")
+})
 public class ProjectMediaLink {
     @EmbeddedId
     private ProjectMediaId id;

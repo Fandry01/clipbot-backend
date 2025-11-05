@@ -14,7 +14,9 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
@@ -46,22 +48,22 @@ public class ProjectController {
 
     // Ondersteunt ?ownerId=... OF ?ownerExternalSubject=...
     @GetMapping
-    public Page<ProjectResponse> listProjects(
-            @RequestParam(required = false) UUID ownerId,
-            @RequestParam(required = false) String ownerExternalSubject,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size
-    ) {
+    @Transactional(readOnly = true)
+    public Page<ProjectResponse> listProjects(@RequestParam(defaultValue="0") int page,
+                                              @RequestParam(defaultValue="10") int size,
+                                              @RequestParam(required = false) String ownerExternalSubject,
+                                              @RequestParam(required = false) UUID ownerId) {
+        if (page < 0 || size <= 0 || size > 200) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "BAD_PAGINATION");
+        UUID resolvedOwnerId = resolveOwnerParam(ownerId, ownerExternalSubject);
         Page<Project> p = (ownerExternalSubject != null && !ownerExternalSubject.isBlank())
                 ? projectService.listProjectsBySubject(ownerExternalSubject, PageRequest.of(page, size))
-                : projectService.listProjects(ownerId, PageRequest.of(page, size));
+                : projectService.listProjects(resolvedOwnerId, PageRequest.of(page, size));
+
         return p.map(ProjectResponse::from);
     }
 
-    /* ================== READ ONE ================== */
-
-    // Ondersteunt ?ownerId=... OF ?ownerExternalSubject=...
     @GetMapping("/{projectId}")
+    @Transactional(readOnly = true)
     public ProjectResponse getProject(
             @PathVariable UUID projectId,
             @RequestParam(required = false) UUID ownerId,
@@ -72,32 +74,20 @@ public class ProjectController {
         return ProjectResponse.from(project);
     }
 
-    /* ================== MEDIA LINKING ================== */
-
-//    @PostMapping("/{projectId}/media")
-//    @ResponseStatus(HttpStatus.CREATED)
-//    public ProjectMediaLinkResponse linkMedia(
-//            @PathVariable UUID projectId,
-//            @Valid @RequestBody ProjectMediaLinkRequest request // bevat ownerId OF ownerExternalSubject + mediaId
-//    ) {
-//        UUID resolvedOwnerId = resolveOwnerParam(request.ownerId(), request.ownerExternalSubject());
-//        ProjectMediaLink link = projectService.linkMedia(projectId, resolvedOwnerId, request.mediaId());
-//        return toResponse(link);
-//    }
-/* MEDIA LINK (STRICT) */
     @PostMapping("/{projectId}/media")
     @ResponseStatus(HttpStatus.CREATED)
-    public ProjectMediaLinkResponse linkMedia(
-            @PathVariable UUID projectId,
-            @RequestBody LinkReq req
-    ) {
+    public ProjectMediaLinkResponse linkMedia(@PathVariable UUID projectId, @RequestBody LinkReq req) {
         var link = projectService.linkMediaStrict(projectId, req.mediaId());
+        var m = link.getMedia();
+
         return new ProjectMediaLinkResponse(
-                link.getId().getProjectId(),
-                link.getId().getMediaId(),
+                m.getId(),
+                m.getPlatform(),
+                m.getExternalUrl(),
                 link.getCreatedAt()
         );
     }
+
     public record LinkReq(UUID mediaId) {}
 
 
@@ -111,9 +101,11 @@ public class ProjectController {
         return projectService.listProjectMedia(projectId, resolvedOwnerId)
                 .stream()
                 .map(l -> new ProjectMediaLinkResponse(
-                l.getId().getProjectId(),
-                l.getId().getMediaId(),
-                l.getCreatedAt()))
+                        l.mediaId(),
+                        l.platform(),
+                        l.externalUrl(),
+                        l.linkedAt()
+                ))
                 .toList();
     }
 

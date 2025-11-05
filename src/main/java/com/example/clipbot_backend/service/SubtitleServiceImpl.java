@@ -140,7 +140,7 @@ public class SubtitleServiceImpl implements SubtitleService {
     }
 
     private static String buildVtt(List<Cue> cues, long clipStart) {
-        StringBuilder vtt = new StringBuilder("WEBVTT\n\n");
+        StringBuilder vtt = new StringBuilder("WEBVTT\nKind: captions\n\n");
         for (Cue cue : cues) {
             vtt.append(formatVttTime(cue.start() - clipStart))
                .append(" --> ")

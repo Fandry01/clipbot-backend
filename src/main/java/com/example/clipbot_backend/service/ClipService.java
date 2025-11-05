@@ -8,6 +8,7 @@ import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
+import jakarta.annotation.Nullable;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -32,10 +33,10 @@ public class ClipService {
 
     @Transactional
     public UUID createFromSegment(UUID mediaId, UUID segmentId, String title, Map<String, Object> meta) {
-        var media = mediaRepo.findById(mediaId).orElseThrow();
-        var seg = segmentRepo.findById(segmentId).orElseThrow();
+        var media = mediaRepo.findById(mediaId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,"MEDIA_NOT_FOUND"));
+        var seg = segmentRepo.findById(segmentId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "SEGMENT_NOT_FOUND"));
         if(!seg.getMedia().getId().equals(mediaId)){
-            throw new IllegalArgumentException("Segment does not belong to media");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SEGMENT_NOT_IN_MEDIA");
         }
         var clip = new Clip(media, seg.getStartMs(), seg.getEndMs());
         clip.setSourceSegment(seg);
@@ -48,9 +49,10 @@ public class ClipService {
 
     @Transactional
     public UUID createCustom(UUID mediaId, long startMs, long endMs,String title,  Map<String, Object> meta) {
-        var media = mediaRepo.findById(mediaId).orElseThrow();
-        if(startMs < 0 || endMs <= startMs) throw new IllegalArgumentException("Invalid bounds");
-        if(media.getDurationMs() != null && media.getDurationMs() > 0 && endMs > media.getDurationMs()) throw new IllegalArgumentException("Clip end beyond media duration");
+        var media = mediaRepo.findById(mediaId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+        if(startMs < 0 || endMs <= startMs) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_BOUNDS");
+        if(media.getDurationMs() != null && media.getDurationMs() > 0 && endMs > media.getDurationMs())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "END_BEYOND_DURATION");
         var clip = new Clip(media, startMs, endMs);
         clip.setTitle(title);
         clip.setMeta(meta);
@@ -66,6 +68,7 @@ public class ClipService {
         clipRepo.save(clip);
     }
 
+    @Deprecated
     @Transactional
     public void setCaptions(UUID clipId, String srtKey, String vttKey){
         var clip = clipRepo.findById(clipId).orElseThrow();
@@ -81,20 +84,24 @@ public class ClipService {
         return clipRepo.findById(clipId).orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
     }
-
-    public UUID enqueueRender(JobService jobService, UUID clipId) {
+    @Transactional
+    public @Nullable UUID enqueueRender(JobService jobService, UUID clipId) {
         var clip = get(clipId);
 
         // Als hij al bezig is, niks doen (idempotent gedrag)
         if (clip.getStatus() == ClipStatus.RENDERING || clip.getStatus() == ClipStatus.QUEUED) {
             // eventueel: return bestaand jobId als je dat bijhoudt
-            return jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
+            return null;
         }
-
         clip.setStatus(ClipStatus.QUEUED);
         clipRepo.saveAndFlush(clip);
-
         return jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
+    }
+
+    //save method
+    public Clip save(Clip clip){
+        return clipRepo.save(clip);
+
     }
 
 

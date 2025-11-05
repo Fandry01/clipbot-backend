@@ -35,7 +35,7 @@ public class Clip {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32)
-    private ClipStatus status;
+    private ClipStatus status = ClipStatus.QUEUED;
 
     @Column(name = "title", length = 255)
     private String title;

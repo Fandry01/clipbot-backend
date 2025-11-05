@@ -13,8 +13,10 @@ public class Template {
     @GeneratedValue
     private UUID id;
 
-    @Column(nullable = false)
-    private UUID ownerId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "owner_id", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_template_owner"))
+    private Account owner;
 
     @Column(nullable = false, length = 200)
     private String name;
@@ -32,6 +34,9 @@ public class Template {
     @PrePersist void prePersist(){ createdAt = updatedAt = Instant.now(); }
     @PreUpdate  void preUpdate(){ updatedAt = Instant.now(); }
 
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
     public UUID getId() {
         return id;
     }
@@ -40,12 +45,12 @@ public class Template {
         this.id = id;
     }
 
-    public UUID getOwnerId() {
-        return ownerId;
+    public Account getOwner() {
+        return owner;
     }
 
-    public void setOwnerId(UUID ownerId) {
-        this.ownerId = ownerId;
+    public void setOwner(Account owner) {
+        this.owner = owner;
     }
 
     public String getName() {
