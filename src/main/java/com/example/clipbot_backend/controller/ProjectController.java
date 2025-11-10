@@ -13,6 +13,7 @@ import com.example.clipbot_backend.util.ClipStatus;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -80,35 +81,24 @@ public class ProjectController {
         var link = projectService.linkMediaStrict(projectId, req.mediaId());
         var m = link.getMedia();
 
-        return new ProjectMediaLinkResponse(
-                link.getId().getProjectId(),
-                link.getId().getMediaId(),
-                m.getPlatform(),
-                m.getExternalUrl(),
-                link.getCreatedAt()
-        );
+        return  ProjectMediaLinkResponse.from(link);
     }
 
     public record LinkReq(UUID mediaId) {}
 
 
     @GetMapping("/{projectId}/media")
-    public List<ProjectMediaLinkResponse> listMedia(
+    public Page<ProjectMediaLinkResponse> listMedia(
             @PathVariable UUID projectId,
             @RequestParam(required = false) UUID ownerId,
-            @RequestParam(required = false) String ownerExternalSubject
+            @RequestParam(required = false) String ownerExternalSubject,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
     ) {
         UUID resolvedOwnerId = resolveOwnerParam(ownerId, ownerExternalSubject);
-        return projectService.listProjectMedia(projectId, resolvedOwnerId)
-                .stream()
-                .map(l -> new ProjectMediaLinkResponse(
-                        l.mediaId(),
-                        projectId,
-                        l.platform(),
-                        l.externalUrl(),
-                        l.linkedAt()
-                ))
-                .toList();
+        var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        return projectService.listProjectMediaPage(projectId, resolvedOwnerId,pageable)
+            .map(ProjectMediaLinkResponse::from);
     }
 
     /* ================== CLIPS ================== */

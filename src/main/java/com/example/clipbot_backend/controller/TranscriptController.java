@@ -156,6 +156,7 @@ public class TranscriptController {
         // fallback: geen herkenbaar schema
         return List.of();
     }
+
     private static ObjectNode emptyWordsStatic() {
         var f = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
         var o = f.objectNode();
@@ -197,13 +198,15 @@ public class TranscriptController {
     @SuppressWarnings("unchecked")
     private static String detectSchema(Object wordsRaw) {
         if (wordsRaw instanceof List<?>) return "list";
-        if (wordsRaw instanceof Map<?,?> m) {
-            if (((Map<String,Object>) m).containsKey("items")) return "map.items";
-            if (((Map<String,Object>) m).containsKey("words")) return "map.words";
-            if (((Map<String,Object>) m).containsKey("segments")) return "map.segments";
+        if (wordsRaw instanceof Map<?, ?> mapAny) {
+            Map<String, Object> m = (Map<String, Object>) mapAny;
+            if (m.containsKey("items"))    return "map.items";
+            if (m.containsKey("words"))    return "map.words";
+            if (m.containsKey("segments")) return "map.segments";
         }
         return "unknown";
     }
+
     private void ensureOwnedBy(Media media, String subject) {
         String ownerSub = media.getOwner().getExternalSubject();
         if (!Objects.equals(ownerSub, subject))

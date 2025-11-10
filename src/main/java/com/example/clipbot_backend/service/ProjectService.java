@@ -115,6 +115,7 @@ public class ProjectService {
         return projectMediaRepository.save(link);
     }
 
+
     @Transactional
     public ProjectMediaLink linkMediaStrict(UUID projectId, UUID mediaId) {
         var project = get(projectId);
@@ -133,6 +134,15 @@ public class ProjectService {
     }
 
     @Transactional(readOnly = true)
+    public Page<ProjectMediaLink> listProjectMediaPage(UUID projectId, UUID ownerId, Pageable pageable) {
+        var owner = accountService.getByIdOrThrow(ownerId);
+        var project = ensureProjectOwnedBy(projectId, owner);
+        // sort is deel van pageable; voor default: PageRequest.of(page,size, Sort.by(DESC,"createdAt"))
+        return projectMediaRepository.findByProject(project, pageable);
+    }
+
+
+    @Transactional(readOnly = true)
     public List<ProjectMediaView> listProjectMedia(UUID projectId, UUID ownerId) {
         var owner = accountService.getByIdOrThrow(ownerId);
         var project = ensureProjectOwnedBy(projectId, owner);
@@ -146,6 +156,8 @@ public class ProjectService {
                 .toList();
     }
     public record ProjectMediaView(UUID mediaId, String platform, String externalUrl, Instant linkedAt) {}
+
+
 
     /* ---------- CLIPS ---------- */
 

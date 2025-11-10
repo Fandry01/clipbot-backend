@@ -27,29 +27,39 @@ public final class WordsParser {
 
     public static List<WordAdapter> extract(Transcript tr) {
         if (tr == null || tr.getWords() == null) return List.of();
+
         JsonNode root = tr.getWords();
-        List<WordAdapter> out;
+        List<WordAdapter> out = List.of();
 
-        // 1) schema v1: { items: [ { startMs,endMs,text,confidence? } ] }
+        // 1) schema v1
         out = parseItemsArray(root.path("items"));
-        if (!out.isEmpty()) return out;
-
-        // 2) FW verbose: { segments:[ { words:[ {start,end,word|text,confidence?} ] } ] }
-        out = parseFwSegments(root.path("segments"));
-        if (!out.isEmpty()) return out;
-
-        // 3a) vlakke words-array: { words:[ {startMs,endMs,text} ] }
-        out = parseItemsArray(root.path("words"));
-        if (!out.isEmpty()) return out;
-
-        // 3b) top-level array als laatste fallback
-        if (root.isArray()) {
+        if (out.isEmpty()) {
+            // 2) FW verbose
+            out = parseFwSegments(root.path("segments"));
+        }
+        if (out.isEmpty()) {
+            // 3a) vlakke words-array
+            out = parseItemsArray(root.path("words"));
+        }
+        if (out.isEmpty() && root.isArray()) {
+            // 3b) top-level array
             out = parseItemsArray(root);
-            if (!out.isEmpty()) return out;
         }
 
-        return List.of();
+        if (out.isEmpty()) return List.of();
+
+        // sorteer & clamp
+        out = new ArrayList<>(out);
+        out.sort(Comparator.comparingLong(w -> w.startMs));
+        for (int i = 0; i < out.size(); i++) {
+            WordAdapter w = out.get(i);
+            if (w.endMs < w.startMs) {
+                out.set(i, new WordAdapter(w.text, w.startMs, w.startMs, w.confidence));
+            }
+        }
+        return out;
     }
+
 
     /* ---------- helpers ---------- */
 
@@ -57,8 +67,8 @@ public final class WordsParser {
         if (!arr.isArray()) return List.of();
         List<WordAdapter> out = new ArrayList<>(arr.size());
         for (JsonNode n : arr) {
-            long s = pickMs(n.get("startMs"), n.get("startSec"));
-            long e = pickMs(n.get("endMs"),   n.get("endSec"));
+            long s = pickMs(n.get("startMs"), n.get("start"));
+            long e = pickMs(n.get("endMs"),   n.get("end"));
             String text = firstText(n, "text", "word");
             Double conf = asDouble(n.get("confidence"), n.get("conf"));
             if (text != null && !text.isBlank() && e >= s) {
@@ -74,13 +84,23 @@ public final class WordsParser {
         for (JsonNode seg : segs) {
             JsonNode words = seg.path("words");
             if (!words.isArray()) continue;
-            for (JsonNode w : words) {
-                long s = asMsFromSeconds(w.get("start"));
-                long e = asMsFromSeconds(w.get("end"));
-                String text = firstText(w, "word", "text");
-                Double conf = asDouble(w.get("confidence"), w.get("conf"));
-                if (text != null && !text.isBlank() && e >= s) {
-                    out.add(new WordAdapter(text, s, e, conf));
+            if(words.isArray() && !words.isEmpty()) {
+                for (JsonNode w : words) {
+                    long s = asMsFromSeconds(w.get("start"));
+                    long e = asMsFromSeconds(w.get("end"));
+                    String text = firstText(w, "word", "text");
+                    Double conf = asDouble(w.get("confidence"), w.get("conf"));
+                    if (text != null && !text.isBlank() && e >= s) {
+                        out.add(new WordAdapter(text, s, e, conf));
+                    }
+                }
+            }else {
+                // Fallback: segment met alleen text + start/end
+                long s = asMsFromSeconds(seg.get("start"));
+                long e = asMsFromSeconds(seg.get("end"));
+                String text = seg.hasNonNull("text") ? seg.get("text").asText("") : "";
+                if (!text.isBlank() && e >= s) {
+                    out.add(new WordAdapter(text, s, e, null));
                 }
             }
         }
