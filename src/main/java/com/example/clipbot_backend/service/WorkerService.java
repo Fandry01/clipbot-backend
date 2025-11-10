@@ -74,12 +74,15 @@ public class WorkerService {
 
     @Scheduled(fixedDelayString = "3000")
     public void poll() {
+        LOGGER.debug("Worker poll tick");
         jobService.pickOneQueued().ifPresent(job -> {
+            LOGGER.debug("Worker picked job id={} type={} status={}", job.getId(), job.getType(), job.getStatus());
             try {
                 switch (job.getType()) {
-                    case TRANSCRIBE -> handleTranscribe(job);
+                    case TRANSCRIBE -> { LOGGER.debug("handleTranscribe start id={}", job.getId()); handleTranscribe(job); }
 
                     case DETECT -> {
+                        LOGGER.debug("detectWorkflow.start id={}", job.getId());
                         int count = detectWorkflow.run(job.getMedia().getId(), job.getPayload());
                         jobService.markDone(job.getId(), Map.of("segmentCount", count));
                     }
@@ -87,6 +90,7 @@ public class WorkerService {
                     case CLIP -> {
                         try {
                             var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
+                            LOGGER.debug("clipWorkFlow.start id={}", job.getId());
                             clipWorkFlow.run(clipId); // aparte bean → @Transactional actief
                             jobService.markDone(job.getId(), Map.of("clipId", clipId.toString()));
                         } catch (Exception e) {
@@ -106,6 +110,7 @@ public class WorkerService {
 
 @Transactional
 void handleTranscribe(Job job) {
+    LOGGER.debug("TRANSCRIBE enter jobId={} mediaId={}", job.getId(), job.getMedia()!=null?job.getMedia().getId():null); // 👈
     Objects.requireNonNull(job, "job");
     final UUID mediaId = job.getMedia() != null ? job.getMedia().getId() : null;
     if (mediaId == null) {

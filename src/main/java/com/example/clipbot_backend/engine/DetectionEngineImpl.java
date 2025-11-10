@@ -9,7 +9,10 @@ import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.service.ClipAssembler;
 import com.example.clipbot_backend.service.Interfaces.SilenceDetector;
+import com.example.clipbot_backend.service.WorkerService;
 import com.example.clipbot_backend.util.TranscriptUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -24,6 +27,7 @@ import java.util.stream.Collectors;
 public class DetectionEngineImpl implements DetectionEngine {
     private final SilenceDetector silenceDetector;
     private final ClipAssembler assembler = new ClipAssembler();
+    private static final Logger LOGGER = LoggerFactory.getLogger(DetectionEngineImpl.class);
 
     public DetectionEngineImpl(SilenceDetector silenceDetector) {
         this.silenceDetector = silenceDetector;
@@ -33,6 +37,8 @@ public class DetectionEngineImpl implements DetectionEngine {
     public List<SegmentDTO> detect(Path mediaFile, Transcript transcript, DetectionParams params) {
         if (transcript == null) return List.of();
         List<WordsParser.WordAdapter> words = WordsParser.extract(transcript);
+        LOGGER.info("DETECT extracted words={}, mediaFileExists={}", words.size(), Files.exists(mediaFile));
+
         if (words.isEmpty()) return List.of();
         if (mediaFile == null || !Files.exists(mediaFile))
             throw new IllegalArgumentException("Media file missing: " + mediaFile);
@@ -56,8 +62,20 @@ public class DetectionEngineImpl implements DetectionEngine {
                 params.targetLenSec(), params.lenSigmaSec(),
                 params.maxCandidates()
         );
+        if (wins.isEmpty()) {
+            wins = assembler.windowsTextOnly(
+                    sentences,
+                    params.minDurationMs(),        // minMs (long)
+                    params.maxDurationMs(),        // maxMs (long)
+                    params.targetLenSec(),         // double
+                    params.lenSigmaSec(),          // double
+                    Math.max(params.maxCandidates(), 12) // int
+            );
+            LOGGER.info("DETECT fallback text-only windows={}", wins.size());
+        }
 
         long mediaEndGuess = words.get(words.size()-1).endMs;
+        LOGGER.info("DETECT sentences={}, silences={}, windows={}", sentences.size(), silences.size(), wins.size());
 
         return wins.stream().map(w -> {
             Map<String,Object> meta = new LinkedHashMap<>();

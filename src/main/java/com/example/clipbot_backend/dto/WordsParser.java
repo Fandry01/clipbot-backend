@@ -6,6 +6,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import java.util.*;
+
 public final class WordsParser {
     private WordsParser() {}
 
@@ -14,73 +17,113 @@ public final class WordsParser {
         public final long startMs;
         public final long endMs;
         public final Double confidence;
-
         public WordAdapter(String text, long startMs, long endMs, Double confidence) {
-            this.text = text;
-            this.startMs = startMs;
-            this.endMs = endMs;
+            this.text = text == null ? "" : text;
+            this.startMs = Math.max(0, startMs);
+            this.endMs   = Math.max(this.startMs, endMs);
             this.confidence = confidence;
         }
     }
 
-    @SuppressWarnings("unchecked")
     public static List<WordAdapter> extract(Transcript tr) {
-        Object w = tr.getWords(); // jouw @JdbcTypeCode(SqlTypes.JSON)
-        if (w == null) return List.of();
+        if (tr == null || tr.getWords() == null) return List.of();
+        JsonNode root = tr.getWords();
+        List<WordAdapter> out;
 
-        List<Map<String, Object>> items = null;
+        // 1) schema v1: { items: [ { startMs,endMs,text,confidence? } ] }
+        out = parseItemsArray(root.path("items"));
+        if (!out.isEmpty()) return out;
 
-        if (w instanceof List) {
-            items = (List<Map<String, Object>>) w;
-        } else if (w instanceof Map<?, ?> m) {
-            Object maybeList = ((Map<String, Object>) m).get("items");
-            if (!(maybeList instanceof List)) {
-                maybeList = ((Map<String, Object>) m).get("words");
-            }
-            if (maybeList instanceof List) {
-                items = (List<Map<String, Object>>) maybeList;
-            }
+        // 2) FW verbose: { segments:[ { words:[ {start,end,word|text,confidence?} ] } ] }
+        out = parseFwSegments(root.path("segments"));
+        if (!out.isEmpty()) return out;
+
+        // 3a) vlakke words-array: { words:[ {startMs,endMs,text} ] }
+        out = parseItemsArray(root.path("words"));
+        if (!out.isEmpty()) return out;
+
+        // 3b) top-level array als laatste fallback
+        if (root.isArray()) {
+            out = parseItemsArray(root);
+            if (!out.isEmpty()) return out;
         }
-        if (items == null) return List.of();
 
-        List<WordAdapter> out = new ArrayList<>(items.size());
-        for (Map<String, Object> wm : items) {
-            String text = str(wm.getOrDefault("text", wm.getOrDefault("word", "")));
-            long sMs = pickMs(wm.get("startMs"), wm.get("startSec"));
-            long eMs = pickMs(wm.get("endMs"), wm.get("endSec"));
-            Double conf = numD(wm.getOrDefault("confidence", wm.get("conf")));
-            if (text != null && !text.isBlank() && eMs >= sMs) {
-                out.add(new WordAdapter(text, sMs, eMs, conf));
+        return List.of();
+    }
+
+    /* ---------- helpers ---------- */
+
+    private static List<WordAdapter> parseItemsArray(JsonNode arr) {
+        if (!arr.isArray()) return List.of();
+        List<WordAdapter> out = new ArrayList<>(arr.size());
+        for (JsonNode n : arr) {
+            long s = pickMs(n.get("startMs"), n.get("startSec"));
+            long e = pickMs(n.get("endMs"),   n.get("endSec"));
+            String text = firstText(n, "text", "word");
+            Double conf = asDouble(n.get("confidence"), n.get("conf"));
+            if (text != null && !text.isBlank() && e >= s) {
+                out.add(new WordAdapter(text, s, e, conf));
             }
         }
         return out;
     }
 
-    private static long pickMs(Object ms, Object sec) {
-        if (ms != null) return numL(ms);
-        if (sec != null) return Math.round(numD(sec) * 1000.0);
+    private static List<WordAdapter> parseFwSegments(JsonNode segs) {
+        if (!segs.isArray()) return List.of();
+        List<WordAdapter> out = new ArrayList<>();
+        for (JsonNode seg : segs) {
+            JsonNode words = seg.path("words");
+            if (!words.isArray()) continue;
+            for (JsonNode w : words) {
+                long s = asMsFromSeconds(w.get("start"));
+                long e = asMsFromSeconds(w.get("end"));
+                String text = firstText(w, "word", "text");
+                Double conf = asDouble(w.get("confidence"), w.get("conf"));
+                if (text != null && !text.isBlank() && e >= s) {
+                    out.add(new WordAdapter(text, s, e, conf));
+                }
+            }
+        }
+        return out;
+    }
+
+    private static String firstText(JsonNode n, String... keys) {
+        for (String k : keys) {
+            JsonNode v = n.get(k);
+            if (v != null && !v.isNull()) return v.asText("");
+        }
+        return "";
+    }
+
+    private static long pickMs(JsonNode msNode, JsonNode secNode) {
+        if (msNode != null && !msNode.isNull()) return asLong(msNode);
+        if (secNode != null && !secNode.isNull()) return asMsFromSeconds(secNode);
         return 0L;
     }
 
-    private static String str(Object o) {
-        return (o == null) ? null : String.valueOf(o);
+    private static long asLong(JsonNode n) {
+        if (n == null || n.isNull()) return 0L;
+        if (n.isNumber()) return n.longValue();
+        try { return Long.parseLong(n.asText("0")); } catch (Exception ignore) { return 0L; }
     }
 
-    private static long numL(Object o) {
-        if (o instanceof Number n) return n.longValue();
-        try {
-            return Long.parseLong(String.valueOf(o));
-        } catch (Exception e) {
-            return 0L;
-        }
+    private static long asMsFromSeconds(JsonNode n) {
+        if (n == null || n.isNull()) return 0L;
+        double d = n.isNumber() ? n.doubleValue() : safeDouble(n.asText("0"));
+        return Math.round(d * 1000.0);
     }
 
-    private static double numD(Object o) {
-        if (o instanceof Number n) return n.doubleValue();
-        try {
-            return Double.parseDouble(String.valueOf(o));
-        } catch (Exception e) {
-            return 0.0;
+    private static Double asDouble(JsonNode... nodes) {
+        for (JsonNode n : nodes) {
+            if (n == null || n.isNull()) continue;
+            if (n.isNumber()) return n.doubleValue();
+            try { return Double.parseDouble(n.asText()); } catch (Exception ignore) {}
         }
+        return null;
+    }
+
+    private static double safeDouble(String s) {
+        try { return Double.parseDouble(s); } catch (Exception e) { return 0.0; }
     }
 }
+

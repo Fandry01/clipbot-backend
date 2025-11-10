@@ -46,7 +46,7 @@ public class MediaController {
         UUID mediaId = mediaService.createMediaFromUrl(
                 request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride()
         );
-
+        Media media = mediaService.get(mediaId);
         // Service zet DOWNLOADING; dat moeten we zo teruggeven:
         return new MediaFromUrlResponse(
                 mediaId,
@@ -54,7 +54,8 @@ public class MediaController {
                 (platform != null ? platform.id() : null),
                 durationMs,
                 (md != null ? md.thumbnail() : null),
-                normalizedUrl
+                normalizedUrl,
+                media.getObjectKey()
         );
     }
 

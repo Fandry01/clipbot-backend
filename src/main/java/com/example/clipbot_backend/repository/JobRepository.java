@@ -38,7 +38,7 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     @Modifying @Transactional
     @Query(value = """
         UPDATE job
-           SET status = 'DONE',
+           SET status = 'COMPLETE',
                updated_at = now(),
                result = CAST(:resultJson AS jsonb)
          WHERE id = :id
@@ -48,7 +48,7 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     @Modifying @Transactional
     @Query(value = """
         UPDATE job
-           SET status = 'ERROR',
+           SET status = 'FAILED',
                updated_at = now(),
                result = CAST(:errorJson AS jsonb)
          WHERE id = :id

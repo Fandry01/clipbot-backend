@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Transcript;
@@ -8,6 +9,8 @@ import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -20,7 +23,7 @@ public class TranscriptService {
     private final TranscriptRepository transcriptRepo;
     private final MediaRepository mediaRepo;
     private final ObjectMapper om;
-
+    private static final Logger LOGGER = LoggerFactory.getLogger(TranscriptService.class);
 
     public TranscriptService(TranscriptRepository transcriptRepo, MediaRepository mediaRepo, ObjectMapper om) {
         this.transcriptRepo = transcriptRepo;
@@ -86,8 +89,11 @@ public class TranscriptService {
         JsonNode wordsNode = om.valueToTree(wordsDoc);
         transcript.setWords(wordsNode);
         try {
-            transcriptRepo.save(transcript);
-            return transcript.getId();
+            var saved = transcriptRepo.saveAndFlush(transcript); // forceer persist + id
+            var words = WordsParser.extract(saved);
+            LOGGER.info("Transcript upsert media={} lang={} provider={} words={}",
+                    mediaId, lang, provider, words.size());
+            return saved.getId();
         } catch (DataIntegrityViolationException dup) {
             // unique (media,lang,provider) – race safe
             return transcriptRepo.findByMediaAndLangAndProvider(media, lang, provider)

@@ -3,6 +3,7 @@ package com.example.clipbot_backend.service;
 import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.dto.FwVerboseResponse;
 import com.example.clipbot_backend.dto.SegmentDTO;
+import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Segment;
@@ -13,6 +14,7 @@ import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.util.MediaStatus;
 import com.fasterxml.jackson.databind.JsonNode;
+import io.netty.handler.timeout.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -22,8 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
+
 import java.util.*;
+
 
 @Service
 public class DetectWorkflow {
@@ -49,17 +52,24 @@ public class DetectWorkflow {
     }
 
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
+        LOGGER.debug("DW.run ENTER mediaId={} payloadKeys={}", mediaId, payload==null?0:payload.size());
+        long t0 = System.nanoTime();
         // TX A: kort
         Media media = markProcessing(mediaId);
+        LOGGER.debug("DW.run markProcessing ok status={} objectKey={}", media.getStatus(), media.getObjectKey());
 
         try {
             // --- No TX: IO / transcript ---
             String lang = optStr(payload, "lang");
             String provider = optStr(payload, "provider");
+            LOGGER.debug("DW.run about to resolveOrCreateTranscript lang={} provider={}", lang, provider);
 
             Transcript tr = resolveOrCreateTranscript(media, lang, provider); // zonder TX
+            LOGGER.info("DETECT words={} media={}",
+                    (tr!=null && tr.getWords()!=null && tr.getWords().has("items")) ? tr.getWords().get("items").size() : -1,
+                    media.getId());
 
-            Path srcPath = requireRaw(media.getObjectKey());
+            Path srcPath = requireRaw(media);
             DetectionParams params = buildParams(payload);
             var detected = detection.detect(srcPath, tr, params);
 
@@ -88,26 +98,60 @@ public class DetectWorkflow {
     }
 
     protected Transcript resolveOrCreateTranscript(Media media, String lang, String provider) throws Exception {
-        // 1) Neem het nieuwste transcript indien aanwezig
+        LOGGER.debug("DW.resolveOrCreateTranscript media={} lang={} provider={}", media.getId(), lang, provider);
+
+        // 1) Als er al een transcript is: return (laatste = ok voor detect)
         Transcript existing = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
-        if (existing != null) return existing;
+        if (existing != null) {
+            LOGGER.debug("DW transcript exists id={} createdAt={}", existing.getId(), existing.getCreatedAt());
+            return existing;
+        }
 
-        // 2) Anders: garandeer RAW input (bij URL evt. downloaden)
-        Path raw = requireRaw(media.getObjectKey());
+        // 2) RAW garanderen (download bij source=url)
+        Path raw = requireRaw(media);
+        long size = java.nio.file.Files.size(raw);
+        LOGGER.info("FW START media={} key={} size={}B", media.getId(), media.getObjectKey(), size);
 
-        // 3) Snelle transcript (faster-whisper) — provider-hint negeren voor nu
-        FwVerboseResponse fw = fastWhisperClient.transcribeFile(raw, true);
+        // Provider-keuze (nu alleen fw; breid later uit met gpt engine)
+        String chosen = (provider == null || provider.isBlank()) ? "fw" : provider.trim().toLowerCase(Locale.ROOT);
+        if (!chosen.equals("fw")) {
+            LOGGER.warn("Provider '{}' nog niet geimplementeerd in DetectWorkflow; fallback naar 'fw'", chosen);
+            chosen = "fw";
+        }
 
-        // 4) Converteer naar jouw model en persisteren via TranscriptService… (je hebt hier alleen repo)
-        //   Omdat je hier geen TranscriptService injecuteert, maken we een Transcript entity direct:
+        long t0 = System.nanoTime();
+        FwVerboseResponse fw;
+        try {
+            fw = fastWhisperClient.transcribeFile(raw, true); // word timestamps
+        } catch (TimeoutException te) {
+            LOGGER.warn("FW TIMEOUT media={} after {} ms", media.getId(), (System.nanoTime()-t0)/1_000_000);
+            throw te;
+        }
+        long dtMs = (System.nanoTime()-t0)/1_000_000;
+        int segCount = (fw != null && fw.segments()!=null) ? fw.segments().size() : -1;
+        LOGGER.info("FW DONE  media={} in {} ms, segments={}", media.getId(), dtMs, segCount);
+
+        // 4) Transcript entity vullen
         Transcript t = new Transcript();
         t.setMedia(media);
         t.setLang(  fw != null && fw.language()!=null ? fw.language().toLowerCase(Locale.ROOT) : defaultLang(lang));
-        t.setProvider("fw"); // of "FW" – kies consistentie met elders
+        t.setProvider("fw");
         t.setText( fw != null && fw.text()!=null ? fw.text().strip() : "" );
-        t.setWords( toWordsJson(fw) ); // JsonNode met schema “verbose_json” of vergelijkbaar
-        return transcriptRepo.save(t);
+        t.setWords( toWordsJson(fw) ); // JsonNode
+
+        t = transcriptRepo.save(t);
+
+        // Korte sanity-log (hoeveel woorden parsed door WordsParser)
+        try {
+            var words = WordsParser.extract(t);
+            LOGGER.info("TRANSCRIPT SAVED media={} id={} words={}", media.getId(), t.getId(), words.size());
+        } catch (Exception parseEx) {
+            LOGGER.warn("WordsParser failed media={} id={} err={}", media.getId(), t.getId(), parseEx.toString());
+        }
+
+        return t;
     }
+
 
 
 
@@ -116,13 +160,32 @@ public class DetectWorkflow {
         return hint == null || hint.isBlank() ? "auto" : hint.toLowerCase(Locale.ROOT);
     }
 
-    protected Path requireRaw(String objectKey) throws Exception {
-        if (objectKey == null || objectKey.isBlank())
-            throw new IllegalStateException("objectKey missing on media");
-        Path raw = storage.resolveRaw(objectKey);
-        if (!Files.exists(raw)) throw new IllegalStateException("RAW missing: " + raw);
-        return raw;
+    private Path requireRaw(Media media) {
+        String key = media.getObjectKey();
+        if (key == null || key.isBlank()) {
+            throw new IllegalStateException("media.objectKey invalid: " + key);
+        }
+
+        Path p = storage.resolveRaw(key);
+        if (Files.exists(p)) return p;
+
+        // Lazy download voor URL-bronnen
+        String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
+        if ("url".equals(src)) {
+            if (media.getExternalUrl() == null || media.getExternalUrl().isBlank()) {
+                throw new IllegalStateException("externalUrl is null for URL source");
+            }
+            // download precies onder de gekozen objectKey
+            urlDownloader.ensureRawObject(media.getExternalUrl(), key);
+            p = storage.resolveRaw(key);
+            if (Files.exists(p)) return p;
+        }
+
+        throw new IllegalStateException("RAW missing: " + p);
     }
+
+
+
     protected DetectionParams buildParams(Map<String,Object> payload) {
         if (payload == null) return DetectionParams.defaults();
 
@@ -152,7 +215,9 @@ public class DetectWorkflow {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     protected void persistSegments(UUID mediaId, List<SegmentDTO> refined) {
         var media = mediaRepo.getReferenceById(mediaId);
-        segmentRepo.deleteByMedia(media);
+        int removed = segmentRepo.deleteByMedia(media);
+        LOGGER.debug("Removed {} segments for media {}", removed, mediaId);
+        //segmentRepo.deleteByMedia(media);
         if (!refined.isEmpty()) {
             var entities = new ArrayList<Segment>(refined.size());
             for (var s : refined) {
@@ -183,38 +248,48 @@ public class DetectWorkflow {
         return null;
     }
     private JsonNode toWordsJson(FwVerboseResponse fw) {
-        if (fw == null) return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
         var f = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
         var root = f.objectNode();
         root.put("schema", "fw.verbose_json");
         var items = f.arrayNode();
 
-        // eerst root.words
-        if (fw.words()!=null) {
-            for (var w : fw.words()) {
-                var n = f.objectNode();
-                n.put("text", w.word()==null ? "" : w.word());
-                n.put("start", w.start()==null ? 0.0 : w.start());
-                n.put("end",   w.end()==null   ? (w.start()==null?0.0:w.start()) : w.end());
-                items.add(n);
-            }
-        }
-        // dan segments[].words (fallback/aanvulling)
-        else if (fw.segments()!=null) {
-            for (var s : fw.segments()) {
-                if (s.words()==null) continue;
-                for (var w : s.words()) {
+        if (fw != null) {
+            if (fw.words() != null) {
+                for (var w : fw.words()) {
+                    double sSec = (w.start() == null ? 0.0 : w.start());
+                    double eSec = (w.end()   == null ? sSec : w.end());
+                    long sMs = Math.max(0L, Math.round(sSec * 1000.0));
+                    long eMs = Math.max(sMs, Math.round(eSec * 1000.0));
+
                     var n = f.objectNode();
-                    n.put("text", w.word()==null ? "" : w.word());
-                    n.put("start", w.start()==null ? 0.0 : w.start());
-                    n.put("end",   w.end()==null   ? (w.start()==null?0.0:w.start()) : w.end());
+                    n.put("text", w.word() == null ? "" : w.word());
+                    n.put("startMs", sMs);
+                    n.put("endMs",   eMs);
                     items.add(n);
+                }
+            } else if (fw.segments() != null) {
+                for (var s : fw.segments()) {
+                    if (s.words() == null) continue;
+                    for (var w : s.words()) {
+                        double sSec = (w.start() == null ? 0.0 : w.start());
+                        double eSec = (w.end()   == null ? sSec : w.end());
+                        long sMs = Math.max(0L, Math.round(sSec * 1000.0));
+                        long eMs = Math.max(sMs, Math.round(eSec * 1000.0));
+
+                        var n = f.objectNode();
+                        n.put("text", w.word() == null ? "" : w.word());
+                        n.put("startMs", sMs);
+                        n.put("endMs",   eMs);
+                        items.add(n);
+                    }
                 }
             }
         }
+
         root.set("items", items);
         return root;
     }
+
 
     private SegmentDTO snapToWordBounds(SegmentDTO seg, FwVerboseResponse fw, long offsetMs) {
         long s = seg.startMs(), e = seg.endMs();

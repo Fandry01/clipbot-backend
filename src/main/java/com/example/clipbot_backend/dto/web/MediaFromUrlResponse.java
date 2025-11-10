@@ -11,6 +11,7 @@ public record MediaFromUrlResponse(
         String platform,
         Long durationMs,
         String normalizedUrl,
-        String thumbnail
+        String thumbnail,
+        String objectKey
 ) {
 }

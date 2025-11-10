@@ -31,6 +31,7 @@ public class FasterWhisperClient {
     }
 
     public FwVerboseResponse transcribeFile(Path file, boolean wordTs) {
+        long t0 = System.currentTimeMillis();
         var mb = new LinkedMultiValueMap<String, Object>();
         mb.add("file", new FileSystemResource(file));
         if (model != null && !model.isBlank()) {

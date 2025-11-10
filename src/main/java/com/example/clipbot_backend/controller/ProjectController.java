@@ -81,7 +81,8 @@ public class ProjectController {
         var m = link.getMedia();
 
         return new ProjectMediaLinkResponse(
-                m.getId(),
+                link.getId().getProjectId(),
+                link.getId().getMediaId(),
                 m.getPlatform(),
                 m.getExternalUrl(),
                 link.getCreatedAt()
@@ -102,6 +103,7 @@ public class ProjectController {
                 .stream()
                 .map(l -> new ProjectMediaLinkResponse(
                         l.mediaId(),
+                        projectId,
                         l.platform(),
                         l.externalUrl(),
                         l.linkedAt()

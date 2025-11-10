@@ -79,4 +79,80 @@ public class ClipAssembler {
         for (var s: silences){ long dist=Math.abs(ms - s.startMs()); if (dist<=thresh && dist<distBest){distBest=dist; best=s.startMs();}}
         return best;
     }
+
+    public List<Window> windowsTextOnly(
+            List<SentenceSpan> sentences,
+            long minMs, long maxMs,
+            double targetLenSec, double sigmaSec,
+            int maxCandidates
+    ) {
+        List<Window> out = new ArrayList<>();
+        if (sentences == null || sentences.isEmpty()) return out;
+
+        // 1) Normalize input
+        sentences.sort(Comparator.comparingLong(SentenceSpan::startMs));
+
+        // Veiligheids-caps om n^2 te temperen
+        final int MAX_POOL = Math.max(40, maxCandidates * 5); // was *10
+        final int MAX_J_STEPS = 3000; // harde cap per i (afhankelijk van je typical lengte)
+
+        for (int i = 0; i < sentences.size(); i++) {
+            long start = sentences.get(i).startMs();
+            if (start < 0) continue;
+
+            int jSteps = 0;
+            for (int j = i; j < sentences.size(); j++) {
+                if (++jSteps > MAX_J_STEPS) break;
+
+                long end = sentences.get(j).endMs();
+                long d = end - start;
+                if (d < minMs) continue;
+                if (d > maxMs) break; // niet verder zoeken; j alleen maar groter
+
+                // 2) Score berekenen
+                var slice = sentences.subList(i, j + 1);
+                var comp = scorer.scoreWindow(slice, targetLenSec, sigmaSec);
+                double score = Math.max(0.01, comp.overall());
+                if (score < 0.05) continue; // mini-threshold voorkomt ruis
+
+                out.add(new Window(i, j, start, end, score, comp.toMeta()));
+
+                // pool limiteren om sort-kosten te beperken
+                if (out.size() > MAX_POOL) {
+                    // Hou alleen top N*2 bij, rest droppen
+                    out.sort(Comparator.comparingDouble(w -> -w.score));
+                    out = new ArrayList<>(out.subList(0, Math.min(out.size(), maxCandidates * 2)));
+                }
+            }
+        }
+
+        if (out.isEmpty()) return out;
+
+        // 3) Final sort & de-dup (laat kleine overlap toe, bv. 20%)
+        out.sort(Comparator.comparingDouble(w -> -w.score));
+        List<Window> dedup = new ArrayList<>();
+        boolean[] used = new boolean[sentences.size()];
+
+        for (var w : out) {
+            // overlap check op zins-indexen met 20% tolerantie
+            int span = (w.endIdx - w.startIdx + 1);
+            int allowedOverlap = Math.max(0, (int)Math.floor(span * 0.2));
+
+            int overlapCount = 0;
+            for (int k = w.startIdx; k <= w.endIdx; k++) {
+                if (used[k]) overlapCount++;
+                if (overlapCount > allowedOverlap) break;
+            }
+            if (overlapCount > allowedOverlap) continue;
+
+            for (int k = w.startIdx; k <= w.endIdx; k++) used[k] = true;
+            dedup.add(w);
+            if (dedup.size() >= maxCandidates) break;
+        }
+
+        return dedup;
+    }
+
+
+
 }

@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
@@ -18,7 +19,9 @@ public interface SegmentRepository extends JpaRepository<Segment, UUID> {
     Page<Segment> findByMediaOrderByStartMsAsc(Media media, Pageable pageable);
 
     Page<Segment> findByMedia(Media media, Pageable pageable);
-    @Modifying
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
     @Query("delete from Segment s where s.media = :media")
-    void deleteByMedia(@Param("media") Media media);;
+    int deleteByMedia(@Param("media") Media media);
 }
