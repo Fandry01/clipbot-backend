@@ -113,10 +113,12 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             // subtitles burn-in (optioneel)
             if (subs != null && subs.srtKey() != null && !subs.srtKey().isBlank()) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
-                if (srtPath != null) {
-                    vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toAbsolutePath().toString()));
+                if (srtPath != null && Files.exists(srtPath)) {
+                    String p = srtPath.toAbsolutePath().toString();
+                    String srtEsc = escapeForFilter(p);
+                    vf = appendFilter(vf, "subtitles='" + srtEsc + "'");
                 } else {
-                    LOGGER.warn("SRT not found for burn-in: {}", subs.srtKey());
+                    LOGGER.warn("SRT not found for burn-in(skipping): {}", subs.srtKey());
                 }
             }
 
@@ -183,23 +185,39 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         LOGGER.info("FFmpeg command: {}", String.join(" ", cmd));
 
         // ===== 3) Run ffmpeg (clip) =====
-        ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
+        ProcessBuilder pb = new ProcessBuilder(cmd)
+                .redirectErrorStream(true);
         Process p = pb.start();
+
+        StringBuilder outBuf = new StringBuilder();
+        StringBuilder errBuf = new StringBuilder();
+
+
         Thread logThread = new Thread(() -> {
             try (var br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                br.lines().forEach(line -> LOGGER.debug("[ffmpeg] {}", line));
+                br.lines().forEach(line -> {LOGGER.debug("[ffmpeg-out] {}", line); outBuf.append(line).append('\n'); });
             } catch (Exception ignore) {}
         });
+        Thread tErr = new Thread(() -> {
+            try (var br = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
+                br.lines().forEach(l -> { LOGGER.debug("[ffmpeg-err] {}", l); errBuf.append(l).append('\n'); });
+            } catch (IOException ignore) {}
+        });
+
         logThread.setDaemon(true);
+        tErr.setDaemon(true);
         logThread.start();
+        tErr.start();
+
 
         boolean finished = p.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
         if (!finished) {
             p.destroyForcibly();
-            throw new RuntimeException("ffmpeg timed out after " + timeout);
+            throw new RuntimeException("ffmpeg timed out after " + timeout + "\n---- ffmpeg stderr ----\n" + errBuf);
         }
         if (p.exitValue() != 0) {
-            throw new RuntimeException("ffmpeg failed with exit " + p.exitValue());
+            throw new RuntimeException("ffmpeg failed with exit " + p.exitValue()
+                    + "\n---- ffmpeg stderr ----\n" + errBuf + "\n---- ffmpeg stdout ----\n" + outBuf);
         }
 
         // ===== 4) Upload clip =====
@@ -253,6 +271,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         } catch (Exception ignored) {}
         return null;
     }
+
     private RenderSpec applyProfile(RenderSpec spec) {
         RenderSpec defaults = switch (spec.profile()) {
             case "tiktok-9x16" -> new RenderSpec(1080, 1920, 30, 23, "veryfast", "tiktok-9x16");
@@ -307,8 +326,12 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
     /** Eenvoudige escape voor ffmpeg subtitles filter. */
     private static String escapeForFilter(String path) {
-        return path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'");
+        return path
+                .replace("\\", "\\\\")
+                .replace(":", "\\:")
+                .replace("'", "\\'");
     }
+
     @SuppressWarnings("unchecked")
     static Double asDbl(Map<String, Object> meta, String key) {
         if (meta == null) return null;

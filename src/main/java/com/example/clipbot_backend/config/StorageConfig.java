@@ -15,6 +15,9 @@ public class StorageConfig {
     @Bean
     public StorageService storageService(StorageProperties properties) {
         Path base = Path.of(properties.getBaseDir());
-        return new LocalStorageService(base, properties.getRawPrefix(), properties.getOutPrefix());
+        var svc = new LocalStorageService(base, properties.getRawPrefix(), properties.getOutPrefix());
+        org.slf4j.LoggerFactory.getLogger(StorageConfig.class)
+                .info("Storage wired: base={}, rawPrefix={}, outPrefix={}", base, properties.getRawPrefix(), properties.getOutPrefix());
+        return svc;
     }
 }
