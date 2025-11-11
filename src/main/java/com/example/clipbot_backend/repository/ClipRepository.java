@@ -27,6 +27,7 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
            select c
            from Clip c
            join fetch c.media m
+           join fetch m.owner
            where c.id = :id
            """)
     Optional<Clip> findByIdWithMedia(@Param("id") UUID id);

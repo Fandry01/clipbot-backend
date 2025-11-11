@@ -98,7 +98,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegBin);
         cmd.add("-y");
-        cmd.add("-force_key_frames"); cmd.add("expr:gte(t,0)");
+
 
 
 
@@ -179,6 +179,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         cmd.add("-pix_fmt");  cmd.add("yuv420p");
         cmd.add("-movflags"); cmd.add("+faststart");
         // **** NEW: einde
+        cmd.add("-force_key_frames");
+        cmd.add("expr:gte(t,0)");
 
         cmd.add(tmpOut.toAbsolutePath().toString());
 
@@ -186,7 +188,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
         // ===== 3) Run ffmpeg (clip) =====
         ProcessBuilder pb = new ProcessBuilder(cmd)
-                .redirectErrorStream(true);
+                .redirectErrorStream(false);
         Process p = pb.start();
 
         StringBuilder outBuf = new StringBuilder();

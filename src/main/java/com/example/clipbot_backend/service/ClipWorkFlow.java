@@ -6,10 +6,7 @@ import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.model.*;
 
-import com.example.clipbot_backend.repository.AssetRepository;
-import com.example.clipbot_backend.repository.ClipRepository;
-import com.example.clipbot_backend.repository.MediaRepository;
-import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.AssetKind;
@@ -36,13 +33,14 @@ public class ClipWorkFlow {
     private final AssetRepository assetRepo;
     private final SubtitleService subtitles;
     private final MediaRepository mediaRepo;
+    private final AccountRepository accountRepo;
 
     public ClipWorkFlow(ClipRepository clipRepo,
                         TranscriptRepository transcriptRepo,
                         StorageService storage,
                         ClipRenderEngine renderEngine,
                         AssetRepository assetRepo,
-                        SubtitleService subtitles, MediaRepository mediaRepo) {
+                        SubtitleService subtitles, MediaRepository mediaRepo, AccountRepository accountRepo) {
         this.clipRepo = clipRepo;
         this.transcriptRepo = transcriptRepo;
         this.storage = storage;
@@ -50,6 +48,7 @@ public class ClipWorkFlow {
         this.assetRepo = assetRepo;
         this.subtitles = subtitles;
         this.mediaRepo = mediaRepo;
+        this.accountRepo = accountRepo;
     }
 
     @Transactional // TX A (kort)
@@ -59,24 +58,22 @@ public class ClipWorkFlow {
         clipRepo.saveAndFlush(clip);
     }
     @Transactional(propagation = Propagation.REQUIRES_NEW) // TX B
-    public void persistSuccess(UUID clipId, RenderResult res, @Nullable SubtitleFiles subs) {
-        var clip = clipRepo.findById(clipId).orElseThrow();
-        var media = clip.getMedia();
-        var owner = media.getOwner();
+    public void persistSuccess(IoData ioData, RenderResult res, @Nullable SubtitleFiles subs) {
 
-        var clipRef = clipRepo.getReferenceById(clip.getId());
-        var mediaRef = mediaRepo.getReferenceById(media.getId());
+        var clipRef = clipRepo.getReferenceById(ioData.clipId);
+        var mediaRef = mediaRepo.getReferenceById(ioData.mediaId);
+        var ownerRef = accountRepo.getReferenceById(ioData.ownerId);
 
         // (optioneel) assets opschonen per kind
         // assetRepo.deleteByRelatedClipAndKind(clipRef, AssetKind.MP4); ...
 
-        Asset mp4 = new Asset(owner, AssetKind.MP4, res.mp4Key(), ensureSize(res.mp4Key(), res.mp4Size()));
+        Asset mp4 = new Asset(ownerRef, AssetKind.MP4, res.mp4Key(), ensureSize(res.mp4Key(), res.mp4Size()));
         mp4.setRelatedClip(clipRef);
         mp4.setRelatedMedia(mediaRef);
         assetRepo.save(mp4);
 
         if (res.thumbKey() != null) {
-            Asset thumb = new Asset(owner, AssetKind.THUMBNAIL, res.thumbKey(), ensureSize(res.thumbKey(), res.thumbSize()));
+            Asset thumb = new Asset(ownerRef, AssetKind.THUMBNAIL, res.thumbKey(), ensureSize(res.thumbKey(), res.thumbSize()));
             thumb.setRelatedClip(clipRef);
             thumb.setRelatedMedia(mediaRef);
             assetRepo.save(thumb);
@@ -84,20 +81,20 @@ public class ClipWorkFlow {
 
         if (subs != null) {
             if (subs.srtKey() != null) {
-                Asset srt = new Asset(owner, AssetKind.SUB_SRT, subs.srtKey(), ensureSize(subs.srtKey(), subs.srtSize()));
+                Asset srt = new Asset(ownerRef, AssetKind.SUB_SRT, subs.srtKey(), ensureSize(subs.srtKey(), subs.srtSize()));
                 srt.setRelatedClip(clipRef); srt.setRelatedMedia(mediaRef);
                 assetRepo.save(srt);
             }
             if (subs.vttKey() != null) {
-                Asset vtt = new Asset(owner, AssetKind.SUB_VTT, subs.vttKey(), ensureSize(subs.vttKey(), subs.vttSize()));
+                Asset vtt = new Asset(ownerRef, AssetKind.SUB_VTT, subs.vttKey(), ensureSize(subs.vttKey(), subs.vttSize()));
                 vtt.setRelatedClip(clipRef); vtt.setRelatedMedia(mediaRef);
                 assetRepo.save(vtt);
             }
         }
 
         // deprecate: clip.setCaptionSrtKey(...)
-        clip.setStatus(ClipStatus.READY);
-        clipRepo.save(clip);
+        clipRef.setStatus(ClipStatus.READY);
+        clipRepo.save(clipRef);
 
         // (optioneel) MediaStatusService.trySetReady(media) als voorwaarden kloppen
     }
@@ -116,7 +113,8 @@ public class ClipWorkFlow {
     public void run(UUID clipId) throws Exception {
         markRendering(clipId);                // TX A
 
-        IoData io = loadIoData(clipId);       // TX (read-only) haalt alles gefetch’d op
+        IoData io = loadIoData(clipId);
+        // TX (read-only) haalt alles gefetch’d op
 
         // IO/Render zonder TX
         Path srcPath = storage.resolveRaw(io.objectKey());
@@ -135,7 +133,7 @@ public class ClipWorkFlow {
         // validateOutputs(res, subs);
 
         try {
-            persistSuccess(clipId, res, subs); // TX B
+            persistSuccess(io, res, subs); // TX B
         } catch (Exception e) {
             persistFailure(clipId, e);         // TX C
             throw e;
@@ -172,14 +170,14 @@ public class ClipWorkFlow {
             }
         }
     }
-    private record IoData(UUID clipId, UUID mediaId, String objectKey, long startMs, long endMs) {}
+    private record IoData(UUID clipId, UUID mediaId, UUID ownerId, String objectKey, long startMs, long endMs) {}
 
     @Transactional(readOnly = true)
     protected IoData loadIoData(UUID clipId) {
         var clip = clipRepo.findByIdWithMedia(clipId)
                 .orElseThrow(() -> new IllegalStateException("CLIP_NOT_FOUND"));
         var m = clip.getMedia(); // is gefetched, dus geen lazy-issue
-        return new IoData(clip.getId(), m.getId(), m.getObjectKey(), clip.getStartMs(), clip.getEndMs());
+        return new IoData(clip.getId(), m.getId(),m.getOwner().getId(), m.getObjectKey(), clip.getStartMs(), clip.getEndMs());
     }
 
 }
