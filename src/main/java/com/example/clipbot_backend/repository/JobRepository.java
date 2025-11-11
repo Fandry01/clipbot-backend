@@ -2,6 +2,7 @@ package com.example.clipbot_backend.repository;
 
 import com.example.clipbot_backend.model.Job;
 import com.example.clipbot_backend.util.JobStatus;
+import com.example.clipbot_backend.util.JobType;
 import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -56,11 +57,15 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     int markError(@Param("id") UUID id, @Param("errorJson") String errorJson);
 
     // ---- Dedup (optioneel) ----
-    @Query(value = """
-        SELECT * FROM job
-         WHERE dedup_key = :dedupKey
-           AND status IN ('QUEUED','RUNNING')
-         LIMIT 1
-        """, nativeQuery = true)
-    Optional<Job> findQueuedOrRunningByDedupKey(@Param("dedupKey") String dedupKey);
+    @Query("""
+       select j from Job j
+       where j.dedupKey = :dedup
+         and j.status in (com.example.clipbot_backend.util.JobStatus.QUEUED,
+                          com.example.clipbot_backend.util.JobStatus.RUNNING)
+       order by j.createdAt desc
+    """)
+    Optional<Job> findQueuedOrRunningByDedupKey(@Param("dedup") String dedupKey);
+
+
+
 }

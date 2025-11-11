@@ -7,9 +7,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ClipRepository extends JpaRepository<Clip, UUID> {
@@ -20,5 +22,13 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
     @Query("select c.status as status, count(c) as cnt from Clip c where c.media in :media group by c.status")
     List<StatusCount> countByMediaInGroupByStatus(List<Media> media);
     interface StatusCount { ClipStatus getStatus(); long getCnt(); }
+
+    @Query("""
+           select c
+           from Clip c
+           join fetch c.media m
+           where c.id = :id
+           """)
+    Optional<Clip> findByIdWithMedia(@Param("id") UUID id);
 
 }

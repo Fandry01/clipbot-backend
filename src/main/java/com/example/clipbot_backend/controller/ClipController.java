@@ -17,6 +17,7 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -80,13 +81,15 @@ public class ClipController {
 
     // Render-job enqueuen (CLIP) — geef juiste mediaId mee via de clip
     @PostMapping("/enqueue-render")
-    public Map<String, UUID> enqueueRender(@Valid @RequestBody EnqueueRenderRequest request, @RequestParam String ownerExternalSubject) {
-        // retourneer desnoods jobId; hier doen we dat.
-        var clip = clipService.get(request.clipId());
+    public ResponseEntity<Map<String, UUID>> enqueueRender(@Valid @RequestBody EnqueueRenderRequest req,
+                                                           @RequestParam String ownerExternalSubject) {
+        var clip = clipService.get(req.clipId());
         ensureOwnedBy(clip, ownerExternalSubject);
-        UUID jobId = clipService.enqueueRender(jobService, request.clipId());
-        return Map.of("jobId", jobId);
+
+        UUID jobId = clipService.enqueueRender(jobService, req.clipId()); // nooit null
+        return ResponseEntity.accepted().body(Map.of("jobId", jobId));
     }
+
     @PatchMapping("/{id}")
     public ClipResponse patch(@PathVariable UUID id,
                               @RequestParam String ownerExternalSubject,

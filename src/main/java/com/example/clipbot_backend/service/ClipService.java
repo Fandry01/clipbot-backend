@@ -1,22 +1,26 @@
 package com.example.clipbot_backend.service;
 
-import com.example.clipbot_backend.dto.ClipResponse;
+
 import com.example.clipbot_backend.model.Clip;
-import com.example.clipbot_backend.model.Segment;
+import com.example.clipbot_backend.model.Job;
 import com.example.clipbot_backend.repository.ClipRepository;
+import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.util.ClipStatus;
+import com.example.clipbot_backend.util.JobStatus;
 import com.example.clipbot_backend.util.JobType;
-import jakarta.annotation.Nullable;
-import jakarta.transaction.Transactional;
+
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -24,11 +28,13 @@ public class ClipService {
     private final ClipRepository clipRepo;
     private final MediaRepository mediaRepo;
     private final SegmentRepository segmentRepo;
+    private final JobRepository jobRepo;
 
-    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo) {
+    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo) {
         this.clipRepo = clipRepo;
         this.mediaRepo = mediaRepo;
         this.segmentRepo = segmentRepo;
+        this.jobRepo = jobRepo;
     }
 
     @Transactional
@@ -85,18 +91,24 @@ public class ClipService {
                 HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
     }
     @Transactional
-    public @Nullable UUID enqueueRender(JobService jobService, UUID clipId) {
+    public UUID enqueueRender(JobService jobs, UUID clipId) {
         var clip = get(clipId);
+        String dedup = "clip:" + clipId;
 
-        // Als hij al bezig is, niks doen (idempotent gedrag)
-        if (clip.getStatus() == ClipStatus.RENDERING || clip.getStatus() == ClipStatus.QUEUED) {
-            // eventueel: return bestaand jobId als je dat bijhoudt
-            return null;
+        // status naar QUEUED als hij nog niet in de renderflow zit
+        if (clip.getStatus() != ClipStatus.QUEUED && clip.getStatus() != ClipStatus.RENDERING) {
+            clip.setStatus(ClipStatus.QUEUED);
+            clipRepo.saveAndFlush(clip);
         }
-        clip.setStatus(ClipStatus.QUEUED);
-        clipRepo.saveAndFlush(clip);
-        return jobService.enqueue(clip.getMedia().getId(), JobType.CLIP, Map.of("clipId", clipId.toString()));
+
+        Map<String,Object> payload = Map.of("clipId", clipId.toString());
+        // mediaId is handig voor correlatie, neem die mee
+        UUID mediaId = clip.getMedia() != null ? clip.getMedia().getId() : null;
+
+        return jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
     }
+
+
 
     //save method
     public Clip save(Clip clip){

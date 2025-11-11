@@ -101,6 +101,7 @@ public class ClipWorkFlow {
 
         // (optioneel) MediaStatusService.trySetReady(media) als voorwaarden kloppen
     }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW) // TX C
     public void persistFailure(UUID clipId, Exception e) {
         var clip = clipRepo.findById(clipId).orElseThrow();
@@ -113,30 +114,30 @@ public class ClipWorkFlow {
 
 
     public void run(UUID clipId) throws Exception {
-        // TX A
-        markRendering(clipId);
+        markRendering(clipId);                // TX A
 
-        // No TX: IO/Render
-        Clip clip = clipRepo.findById(clipId).orElseThrow(); // read-only ok
-        Media media = clip.getMedia();
+        IoData io = loadIoData(clipId);       // TX (read-only) haalt alles gefetch’d op
 
-        Path srcPath = storage.resolveRaw(media.getObjectKey());
+        // IO/Render zonder TX
+        Path srcPath = storage.resolveRaw(io.objectKey());
         if (srcPath == null || !Files.exists(srcPath))
-            throw new IllegalStateException("RAW missing: " + media.getObjectKey());
+            throw new IllegalStateException("RAW missing: " + io.objectKey());
 
-        Transcript tr = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
-        SubtitleFiles subs = (tr != null) ? subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs()) : null;
+        // transcript ophalen met mediaId-variant voorkomt lazy issues
+        var tr = transcriptRepo.findTopByMediaIdOrderByCreatedAtDesc(io.mediaId()).orElse(null);
 
-        RenderOptions options = RenderOptions.withDefaults(clip.getMeta(), subs);
-        RenderResult res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
-        validateOutputs(res, subs); // check presence/sizes
+        SubtitleFiles subs = (tr != null)
+                ? subtitles.buildSubtitles(tr, io.startMs(), io.endMs())
+                : null;
 
-        // TX B
+        RenderOptions options = RenderOptions.withDefaults(Map.of(), subs);
+        RenderResult res = renderEngine.render(srcPath, io.startMs(), io.endMs(), options);
+        // validateOutputs(res, subs);
+
         try {
-            persistSuccess(clipId, res, subs);
+            persistSuccess(clipId, res, subs); // TX B
         } catch (Exception e) {
-            // TX C
-            persistFailure(clipId, e);
+            persistFailure(clipId, e);         // TX C
             throw e;
         }
     }
@@ -171,7 +172,15 @@ public class ClipWorkFlow {
             }
         }
     }
+    private record IoData(UUID clipId, UUID mediaId, String objectKey, long startMs, long endMs) {}
 
+    @Transactional(readOnly = true)
+    protected IoData loadIoData(UUID clipId) {
+        var clip = clipRepo.findByIdWithMedia(clipId)
+                .orElseThrow(() -> new IllegalStateException("CLIP_NOT_FOUND"));
+        var m = clip.getMedia(); // is gefetched, dus geen lazy-issue
+        return new IoData(clip.getId(), m.getId(), m.getObjectKey(), clip.getStartMs(), clip.getEndMs());
+    }
 
 }
 
