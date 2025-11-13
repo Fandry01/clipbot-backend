@@ -15,6 +15,7 @@ import jakarta.annotation.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -34,13 +35,14 @@ public class ClipWorkFlow {
     private final SubtitleService subtitles;
     private final MediaRepository mediaRepo;
     private final AccountRepository accountRepo;
+    private TransactionTemplate txReqNew;
 
     public ClipWorkFlow(ClipRepository clipRepo,
                         TranscriptRepository transcriptRepo,
                         StorageService storage,
                         ClipRenderEngine renderEngine,
                         AssetRepository assetRepo,
-                        SubtitleService subtitles, MediaRepository mediaRepo, AccountRepository accountRepo) {
+                        SubtitleService subtitles, MediaRepository mediaRepo, AccountRepository accountRepo, TransactionTemplate txReqNew) {
         this.clipRepo = clipRepo;
         this.transcriptRepo = transcriptRepo;
         this.storage = storage;
@@ -49,64 +51,77 @@ public class ClipWorkFlow {
         this.subtitles = subtitles;
         this.mediaRepo = mediaRepo;
         this.accountRepo = accountRepo;
+        this.txReqNew = txReqNew;
     }
 
-    @Transactional // TX A (kort)
+ // TX A (kort)
     public void markRendering(UUID clipId) {
-        var clip = clipRepo.findById(clipId).orElseThrow();
-        clip.setStatus(ClipStatus.RENDERING);
-        clipRepo.saveAndFlush(clip);
+        txReqNew.execute(status -> {
+            var clip = clipRepo.findById(clipId).orElseThrow();
+            clip.setStatus(ClipStatus.RENDERING);
+            clipRepo.saveAndFlush(clip);
+            return null;
+        });
     }
-    @Transactional(propagation = Propagation.REQUIRES_NEW) // TX B
+
+
     public void persistSuccess(IoData ioData, RenderResult res, @Nullable SubtitleFiles subs) {
+        txReqNew.execute(status -> {
+            var clipRef = clipRepo.getReferenceById(ioData.clipId);
+            var mediaRef = mediaRepo.getReferenceById(ioData.mediaId);
+            var ownerRef = accountRepo.getReferenceById(ioData.ownerId);
 
-        var clipRef = clipRepo.getReferenceById(ioData.clipId);
-        var mediaRef = mediaRepo.getReferenceById(ioData.mediaId);
-        var ownerRef = accountRepo.getReferenceById(ioData.ownerId);
+            // (optioneel) assets opschonen per kind
+            // assetRepo.deleteByRelatedClipAndKind(clipRef, AssetKind.MP4); ...
 
-        // (optioneel) assets opschonen per kind
-        // assetRepo.deleteByRelatedClipAndKind(clipRef, AssetKind.MP4); ...
+            Asset mp4 = new Asset(ownerRef, AssetKind.MP4, res.mp4Key(), ensureSize(res.mp4Key(), res.mp4Size()));
+            mp4.setRelatedClip(clipRef);
+            mp4.setRelatedMedia(mediaRef);
+            assetRepo.save(mp4);
 
-        Asset mp4 = new Asset(ownerRef, AssetKind.MP4, res.mp4Key(), ensureSize(res.mp4Key(), res.mp4Size()));
-        mp4.setRelatedClip(clipRef);
-        mp4.setRelatedMedia(mediaRef);
-        assetRepo.save(mp4);
-
-        if (res.thumbKey() != null) {
-            Asset thumb = new Asset(ownerRef, AssetKind.THUMBNAIL, res.thumbKey(), ensureSize(res.thumbKey(), res.thumbSize()));
-            thumb.setRelatedClip(clipRef);
-            thumb.setRelatedMedia(mediaRef);
-            assetRepo.save(thumb);
-        }
-
-        if (subs != null) {
-            if (subs.srtKey() != null) {
-                Asset srt = new Asset(ownerRef, AssetKind.SUB_SRT, subs.srtKey(), ensureSize(subs.srtKey(), subs.srtSize()));
-                srt.setRelatedClip(clipRef); srt.setRelatedMedia(mediaRef);
-                assetRepo.save(srt);
+            if (res.thumbKey() != null) {
+                Asset thumb = new Asset(ownerRef, AssetKind.THUMBNAIL, res.thumbKey(), ensureSize(res.thumbKey(), res.thumbSize()));
+                thumb.setRelatedClip(clipRef);
+                thumb.setRelatedMedia(mediaRef);
+                assetRepo.save(thumb);
             }
-            if (subs.vttKey() != null) {
-                Asset vtt = new Asset(ownerRef, AssetKind.SUB_VTT, subs.vttKey(), ensureSize(subs.vttKey(), subs.vttSize()));
-                vtt.setRelatedClip(clipRef); vtt.setRelatedMedia(mediaRef);
-                assetRepo.save(vtt);
+
+            if (subs != null) {
+                if (subs.srtKey() != null) {
+                    Asset srt = new Asset(ownerRef, AssetKind.SUB_SRT, subs.srtKey(), ensureSize(subs.srtKey(), subs.srtSize()));
+                    srt.setRelatedClip(clipRef);
+                    srt.setRelatedMedia(mediaRef);
+                    assetRepo.save(srt);
+                }
+                if (subs.vttKey() != null) {
+                    Asset vtt = new Asset(ownerRef, AssetKind.SUB_VTT, subs.vttKey(), ensureSize(subs.vttKey(), subs.vttSize()));
+                    vtt.setRelatedClip(clipRef);
+                    vtt.setRelatedMedia(mediaRef);
+                    assetRepo.save(vtt);
+                }
             }
-        }
 
-        // deprecate: clip.setCaptionSrtKey(...)
-        clipRef.setStatus(ClipStatus.READY);
-        clipRepo.save(clipRef);
+            // deprecate: clip.setCaptionSrtKey(...)
+            clipRef.setStatus(ClipStatus.READY);
+            clipRepo.save(clipRef);
 
-        // (optioneel) MediaStatusService.trySetReady(media) als voorwaarden kloppen
+            // (optioneel) MediaStatusService.trySetReady(media) als voorwaarden kloppen
+            return null;
+        });
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW) // TX C
+
     public void persistFailure(UUID clipId, Exception e) {
+        txReqNew.execute(status -> {
         var clip = clipRepo.findById(clipId).orElseThrow();
         clip.setStatus(ClipStatus.FAILED);
         var m = new LinkedHashMap<String,Object>(clip.getMeta() == null ? Map.of() : clip.getMeta());
         m.put("renderError", e.toString());
         clip.setMeta(m);
         clipRepo.save(clip);
+
+            return null;
+        });
     }
 
 
@@ -118,6 +133,7 @@ public class ClipWorkFlow {
 
         // IO/Render zonder TX
         Path srcPath = storage.resolveRaw(io.objectKey());
+
         if (srcPath == null || !Files.exists(srcPath))
             throw new IllegalStateException("RAW missing: " + io.objectKey());
 
