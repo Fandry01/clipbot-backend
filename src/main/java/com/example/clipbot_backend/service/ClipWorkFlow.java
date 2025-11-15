@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -133,9 +134,15 @@ public class ClipWorkFlow {
 
         // IO/Render zonder TX
         Path srcPath = storage.resolveRaw(io.objectKey());
-
-        if (srcPath == null || !Files.exists(srcPath))
-            throw new IllegalStateException("RAW missing: " + io.objectKey());
+        if (io.objectKey().toLowerCase(Locale.ROOT).endsWith(".m4a")) {
+            Path mp4Sibling = srcPath.getParent().resolve("source.mp4");
+            if (Files.exists(mp4Sibling) && Files.isRegularFile(mp4Sibling)) {
+                srcPath = mp4Sibling;
+            }
+        }
+        if (!Files.exists(srcPath) || !Files.isRegularFile(srcPath)) {
+            throw new IllegalStateException("RAW missing: " + srcPath);
+        }
 
         // transcript ophalen met mediaId-variant voorkomt lazy issues
         var tr = transcriptRepo.findTopByMediaIdOrderByCreatedAtDesc(io.mediaId()).orElse(null);
@@ -155,6 +162,7 @@ public class ClipWorkFlow {
             throw e;
         }
     }
+
     private long ensureSize(String key, long known) {
         if (known > 0) return known;
         try { return Files.size(storage.resolveOut(key)); }
