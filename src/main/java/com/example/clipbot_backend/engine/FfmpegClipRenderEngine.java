@@ -7,8 +7,10 @@ import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 
 import com.example.clipbot_backend.service.Interfaces.StorageService;
+import com.example.clipbot_backend.util.SmartThumbnailer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -28,12 +30,14 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     private final String ffmpegBin;
     private final Path workDir;
     private final Duration timeout;
+    private final @Nullable Path fontsDir;
 
-    public FfmpegClipRenderEngine(StorageService storageService, String ffmpegBin, Path workDir, Duration timeout) {
+    public FfmpegClipRenderEngine(StorageService storageService, String ffmpegBin, Path workDir, Duration timeout, @Nullable Path fontsDir) {
         this.storageService = storageService;
         this.ffmpegBin = ffmpegBin;
         this.workDir = workDir.toAbsolutePath().normalize();
         this.timeout = timeout !=  null ? timeout : Duration.ofMinutes(2);
+        this.fontsDir = fontsDir != null ? fontsDir.toAbsolutePath().normalize() : null;
         try {
             Files.createDirectories(this.workDir);
         } catch (Exception e) {
@@ -48,6 +52,20 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         // simpele extensie-check als fallback
         String name = file.getFileName().toString().toLowerCase();
         return name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".mp3") || name.endsWith(".wav");
+    }
+    private String subtitleStyleForHeight(int videoH) {
+        int fontPx   = Math.max(28, Math.round(videoH * 0.044f)); // ~48px @1080p
+        int marginV  = Math.max(28, Math.round(videoH * 0.037f)); // ~40px @1080p
+        return "FontName=Inter Semi Bold"
+                + ",FontSize=" + fontPx
+                + ",PrimaryColour=&H00FFFFFF"
+                + ",OutlineColour=&H80000000"
+                + ",BackColour=&H80000000"
+                + ",BorderStyle=3"   // boxed
+                + ",Outline=3"
+                + ",Shadow=0"
+                + ",MarginL=30,MarginR=30,MarginV=" + marginV
+                + ",Alignment=2";    // bottom-center
     }
 
     private static int orDefault(Integer v, int def) { return v != null ? v : def; }
@@ -105,6 +123,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         String vf = null;
         SubtitleFiles subs = options != null ? options.subtitles() : null;
 
+
         if (!audioOnly) {
             // ======== VIDEO+AUDO BRON ========
             cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0)); // ← vóór -i audio
@@ -116,21 +135,29 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 if (srtPath != null && Files.exists(srtPath)) {
                     String p = srtPath.toAbsolutePath().toString();
                     String srtEsc = escapeForFilter(p);
-                    vf = appendFilter(vf, "subtitles='" + srtEsc + "'");
+                    String style  = subtitleStyleForHeight(H).replace("'", "\\'");
+                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    if (fontsDir != null) {
+                        String fdir = escapeForFilter(fontsDir.toString());
+                        subFilter += ":fontsdir='" + fdir + "'";
+                    }
+                    vf = appendFilter(vf, subFilter);
                 } else {
-                    LOGGER.warn("SRT not found for burn-in(skipping): {}", subs.srtKey());
+                    LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
                 }
             }
 
+
             if (width != null && height != null) {
-                vf = appendFilter(vf, "scale=" + width + ":" + height);
+                vf = appendFilter(vf, "scale=" + width + ":" + height + ":force_original_aspect_ratio=decrease");
+                vf = appendFilter(vf, "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2");
             }
 
             // Video encode
             cmd.add("-c:v"); cmd.add("libx264");
             cmd.add("-preset"); cmd.add(targetPreset);
             cmd.add("-crf");    cmd.add(String.valueOf(targetCrf));
-            cmd.add("-r");      cmd.add(String.valueOf(FPS));
+            //cmd.add("-r");      cmd.add(String.valueOf(FPS));
 
             if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
 
@@ -151,8 +178,20 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             // subtitles burn-in kan hier óók (we hebben nu een video canvas)
             if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
-                if (srtPath != null) vf = appendFilter(vf, "subtitles=" + escapeForFilter(srtPath.toString()));
+                if (srtPath != null && Files.exists(srtPath)) {
+                    String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
+                    String style  = subtitleStyleForHeight(H).replace("'", "\\'");
+                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    if (fontsDir != null) {
+                        String fdir = escapeForFilter(fontsDir.toString());
+                        subFilter += ":fontsdir='" + fdir + "'";
+                    }
+                    vf = appendFilter(vf, subFilter);
+                } else {
+                    LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
+                }
             }
+
             vf = appendFilter(vf, "scale=" + W + ":" + H + ":force_original_aspect_ratio=decrease");
             vf = appendFilter(vf, "pad=" + W + ":" + H + ":(ow-iw)/2:(oh-ih)/2");
             if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
@@ -163,8 +202,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
             // Encoders
             cmd.add("-c:v"); cmd.add("libx264");
-            cmd.add("-preset"); cmd.add(targetPreset);
-            cmd.add("-crf");    cmd.add(String.valueOf(targetCrf));
+            cmd.add("-preset"); cmd.add(targetPreset != null ? targetPreset : "medium");
+            cmd.add("-crf");    cmd.add(String.valueOf(targetCrf > 0 ? targetCrf : 18));
 
             cmd.add("-c:a"); cmd.add("aac");
             cmd.add("-b:a"); cmd.add("128k");
@@ -235,26 +274,36 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         String thumbKey = null;
         long   thumbSize = 0L;
         try {
+            Path thumbSrc = audioOnly ? tmpOut : inputFile;
+            double thumbStart = audioOnly ? 0.0 : startMs / 1000.0;
+            double thumbEnd   = audioOnly ? (endMs - startMs)/1000.0 : endMs / 1000.0;
+
+            SmartThumbnailer tn = new SmartThumbnailer(ffmpegBin, workDir);
+            Path best = tn.generate(thumbSrc, thumbStart, thumbEnd, W, H);
+
+            thumbKey = "clips/thumbs/" + best.getFileName();
+            storageService.uploadToOut(best, thumbKey);
+            thumbSize = java.nio.file.Files.size(best);
+            java.nio.file.Files.deleteIfExists(best);
+        } catch (Exception e) {
+            LOGGER.warn("smart thumbnail failed, falling back to mid-frame: {}", e.toString());
             Path thumb = workDir.resolve(outName.replace(".mp4", ".jpg"));
             List<String> tcmd = List.of(
                     ffmpegBin, "-y",
-                    "-ss", String.format(java.util.Locale.ROOT, "%.3f", thumbAtSec),
-                    "-i",  tmpOut.toAbsolutePath().toString(),   // uit GERENDERDE MP4 halen
+                    "-ss", String.format(java.util.Locale.ROOT, "%.3f", Math.max(0.2, ((endMs-startMs)/2000.0) - 0.1)),
+                    "-i",  tmpOut.toAbsolutePath().toString(),
                     "-vframes", "1",
                     "-q:v", "3",
                     thumb.toAbsolutePath().toString()
             );
-            Process tp = new ProcessBuilder(tcmd).redirectErrorStream(true).start();
-            tp.waitFor();
-            if (Files.exists(thumb)) {
+            new ProcessBuilder(tcmd).redirectErrorStream(true).start().waitFor();
+            if (java.nio.file.Files.exists(thumb)) {
                 thumbKey = "clips/thumbs/" + thumb.getFileName();
                 storageService.uploadToOut(thumb, thumbKey);
-                thumbSize = Files.size(thumb);
-                Files.deleteIfExists(thumb);
+                thumbSize = java.nio.file.Files.size(thumb);
+                java.nio.file.Files.deleteIfExists(thumb);
             }
-        } catch (Exception e) {
-            LOGGER.warn("thumbnail generation failed: {}", e.toString());
-        } finally {
+        }finally {
             // tmpOut pas hier opruimen
             try { Files.deleteIfExists(tmpOut); } catch (Exception ignore) {}
         }

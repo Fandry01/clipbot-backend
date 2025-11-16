@@ -9,6 +9,7 @@ import com.example.clipbot_backend.service.Interfaces.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.lang.Nullable;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -26,13 +27,15 @@ public class EngineConfig {
             StorageService storageService,
             @Value("${ffmpeg.binary:ffmpeg}") String ffmpegBin,
             @Value("${clip.render.workDir:./data/work}") String workDir,
-            @Value("${clip.render.timeoutSeconds:180}") long timeoutSeconds
+            @Value("${clip.render.timeoutSeconds:180}") long timeoutSeconds,
+            @Value("${engine.render.fontsDir:}")Path fontsDir
     ) {
         return new FfmpegClipRenderEngine(
                 storageService,
                 ffmpegBin,
                 Path.of(workDir),
-                Duration.ofSeconds(Math.max(1, timeoutSeconds))
+                Duration.ofSeconds(Math.max(1, timeoutSeconds)),
+                fontsDir
         );
     }
 }
