@@ -34,8 +34,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     private static final double AR_THRESHOLD = 1.3;
     private static final double DEFAULT_WIDE_FONT_MUL = 0.0200;
     private static final double DEFAULT_TALL_FONT_MUL = 0.0230;
-    private static final double DEFAULT_WIDE_TEXT_WIDTH = 0.55;
-    private static final double DEFAULT_TALL_TEXT_WIDTH = 0.60;
+    private static final double DEFAULT_WIDE_TEXT_WIDTH = 0.50;
+    private static final double DEFAULT_TALL_TEXT_WIDTH = 0.56;
 
     private final StorageService storageService;
     private final String ffmpegBin;
@@ -93,7 +93,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 + ",Spacing=0"
                 + ",MarginL=" + marginH + ",MarginR=" + marginH + ",MarginV=" + marginV
                 + ",Alignment=2"
-                + ",WrapStyle=3"; // slimme woordafbreking, behoudt centrering
+                + ",WrapStyle=0"; // slimme woordafbreking met korte laatste regel
     }
 
     private static int orDefault(Integer v, int def) { return v != null ? v : def; }
@@ -165,7 +165,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 if (srtPath != null && Files.exists(srtPath)) {
                     String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
                     String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    String subFilter = "subtitles='" + srtEsc + "':original_size=" + W + "x" + H + ":force_style='" + style + "'";
                     if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
                     vf = appendFilter(vf, subFilter);
                 } else {
@@ -200,7 +200,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 if (srtPath != null && Files.exists(srtPath)) {
                     String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
                     String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    String subFilter = "subtitles='" + srtEsc + "':original_size=" + W + "x" + H + ":force_style='" + style + "'";
                     if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
                     vf = appendFilter(vf, subFilter);
                 } else {
