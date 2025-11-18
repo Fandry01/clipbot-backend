@@ -26,6 +26,17 @@ import java.util.UUID;
 public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     private static final Logger LOGGER = LoggerFactory.getLogger(FfmpegClipRenderEngine.class);
 
+    private static final int FONT_MIN_PX = 14;
+    private static final int FONT_MAX_PX = 36;
+    private static final int MIN_MARGIN_V_PX = 44;
+    private static final int MIN_MARGIN_H_PX = 120;
+    private static final double OUTLINE_RATIO = 0.08;
+    private static final double AR_THRESHOLD = 1.3;
+    private static final double DEFAULT_WIDE_FONT_MUL = 0.0200;
+    private static final double DEFAULT_TALL_FONT_MUL = 0.0230;
+    private static final double DEFAULT_WIDE_TEXT_WIDTH = 0.50;
+    private static final double DEFAULT_TALL_TEXT_WIDTH = 0.56;
+
     private final StorageService storageService;
     private final String ffmpegBin;
     private final Path workDir;
@@ -56,15 +67,20 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     private String subtitleStyleForHeight(int videoH, int videoW,@Nullable Map<String,Object> meta) {
         // Dynamisch per aspect ratio
         double ar = (videoW > 0) ? (videoW * 1.0 / Math.max(1, videoH)) : 16.0/9.0;
-        double mul = (ar >= 1.3) ? 0.0222 : 0.0260;
+        double mul = (ar >= AR_THRESHOLD) ? DEFAULT_WIDE_FONT_MUL : DEFAULT_TALL_FONT_MUL;
         Double sc = asDbl(meta, "subtitleScale");
         if (sc != null) {
             // guardrails
             mul = Math.max(0.014, Math.min(0.030, sc));
         }
-        int fontPx   = Math.max(14, Math.min(36, (int)Math.round(videoH * mul))); // ~30px @1080p
-        int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * 0.08)));  // dunne rand
-        int marginV = Math.max(44, (int)Math.round(videoH * 0.006)); // ~32px @1080p
+        int fontPx   = Math.max(FONT_MIN_PX, Math.min(FONT_MAX_PX, (int)Math.round(videoH * mul))); // ~22px @1080p
+        int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * OUTLINE_RATIO)));  // dunne rand
+        int marginV = Math.max(MIN_MARGIN_V_PX, (int)Math.round(videoH * 0.006)); // ~32px @1080p
+
+        double targetTextWidth = ar >= AR_THRESHOLD ? DEFAULT_WIDE_TEXT_WIDTH : DEFAULT_TALL_TEXT_WIDTH; // bredere schermen → smaller tekstblok
+        targetTextWidth = Math.max(0.42, Math.min(0.70, targetTextWidth));
+        double marginHMul = (1.0 - targetTextWidth) / 2.0;
+        int marginH = Math.max(MIN_MARGIN_H_PX, (int)Math.round(videoW * marginHMul)); // grotere marge voor meer regelafbreking
 
         return "FontName=Inter Semi Bold"
                 + ",FontSize=" + fontPx
@@ -75,9 +91,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 + ",Outline=" + outline
                 + ",Shadow=0"
                 + ",Spacing=0"
-                + ",MarginL=44,MarginR=44,MarginV=" + marginV
+                + ",MarginL=" + marginH + ",MarginR=" + marginH + ",MarginV=" + marginV
                 + ",Alignment=2"
-                + ",WrapStyle=2"; // nette regelafbreking
+                + ",WrapStyle=0"; // slimme woordafbreking met korte laatste regel
     }
 
     private static int orDefault(Integer v, int def) { return v != null ? v : def; }
@@ -149,7 +165,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 if (srtPath != null && Files.exists(srtPath)) {
                     String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
                     String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    String subFilter = "subtitles='" + srtEsc + "':original_size=" + W + "x" + H + ":force_style='" + style + "'";
                     if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
                     vf = appendFilter(vf, subFilter);
                 } else {
@@ -184,7 +200,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 if (srtPath != null && Files.exists(srtPath)) {
                     String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
                     String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
+                    String subFilter = "subtitles='" + srtEsc + "':original_size=" + W + "x" + H + ":force_style='" + style + "'";
                     if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
                     vf = appendFilter(vf, subFilter);
                 } else {
