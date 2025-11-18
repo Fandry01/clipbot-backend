@@ -73,7 +73,7 @@ public class DetectWorkflow {
             DetectionParams params = buildParams(payload);
             var detected = detection.detect(srcPath, tr, params);
 
-            var refined = refineWithWordBounds(srcPath, detected);
+            var refined = refineWithWordBounds(srcPath, detected, tr);
 
             // TX B: segments persist (REQUIRES_NEW)
             persistSegments(media.getId(), refined);
@@ -315,8 +315,17 @@ public class DetectWorkflow {
     }
 
     // in DetectWorkflow
-    private List<SegmentDTO> refineWithWordBounds(Path srcPath, List<SegmentDTO> detected) {
+    private List<SegmentDTO> refineWithWordBounds(Path srcPath, List<SegmentDTO> detected, Transcript transcript) {
         if (detected == null || detected.isEmpty()) return detected;
+
+        List<WordsParser.WordAdapter> words = WordsParser.extract(transcript);
+        if (!words.isEmpty()) {
+            List<SegmentDTO> snapped = new ArrayList<>(detected.size());
+            for (SegmentDTO seg : detected) {
+                snapped.add(snapToWordBounds(seg, words));
+            }
+            return snapped;
+        }
 
         final long PAD_MS = 300; // beetje context rond het segment
         List<SegmentDTO> out = new ArrayList<>(detected.size());
@@ -343,6 +352,32 @@ public class DetectWorkflow {
             }
         }
         return out;
+    }
+
+    private SegmentDTO snapToWordBounds(SegmentDTO seg, List<WordsParser.WordAdapter> words) {
+        if (words == null || words.isEmpty()) return seg;
+
+        long s = seg.startMs(), e = seg.endMs();
+        long bestS = s, bestE = e;
+
+        for (WordsParser.WordAdapter w : words) {
+            if (Math.abs(w.startMs - s) < Math.abs(bestS - s)) {
+                bestS = w.startMs;
+            }
+            if (Math.abs(w.endMs - e) < Math.abs(bestE - e)) {
+                bestE = w.endMs;
+            }
+        }
+
+        if (bestE <= bestS) {
+            bestS = s;
+            bestE = e;
+        }
+
+        Map<String,Object> meta = new LinkedHashMap<>(seg.meta()==null?Map.of():seg.meta());
+        meta.put("refined", true);
+        meta.put("offsetMs", 0L);
+        return new SegmentDTO(bestS, bestE, seg.score(), meta);
     }
 
     private static long asLong(Object v, long def) {
