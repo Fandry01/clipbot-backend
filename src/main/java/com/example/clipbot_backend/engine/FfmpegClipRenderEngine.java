@@ -62,7 +62,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             // guardrails
             mul = Math.max(0.014, Math.min(0.030, sc));
         }
-        int fontPx   = Math.max(12, Math.min(32, (int)Math.round(videoH * mul))); // ~30px @1080p
+//        int fontPx   = Math.max(12, Math.min(32, (int)Math.round(videoH * mul))); // ~30px @1080p
+        int fontPx = 17;
         int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * 0.08)));  // dunne rand
         int marginV = Math.max(40, (int)Math.round(videoH * 0.006)); // ~32px @1080p
 
