@@ -34,8 +34,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
     private static final double AR_THRESHOLD = 1.3;
     private static final double DEFAULT_WIDE_FONT_MUL = 0.0200;
     private static final double DEFAULT_TALL_FONT_MUL = 0.0230;
-    private static final double DEFAULT_WIDE_MARGIN_MUL = 0.18;
-    private static final double DEFAULT_TALL_MARGIN_MUL = 0.15;
+    private static final double DEFAULT_WIDE_TEXT_WIDTH = 0.55;
+    private static final double DEFAULT_TALL_TEXT_WIDTH = 0.60;
 
     private final StorageService storageService;
     private final String ffmpegBin;
@@ -77,7 +77,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * OUTLINE_RATIO)));  // dunne rand
         int marginV = Math.max(MIN_MARGIN_V_PX, (int)Math.round(videoH * 0.006)); // ~32px @1080p
 
-        double marginHMul = ar >= AR_THRESHOLD ? DEFAULT_WIDE_MARGIN_MUL : DEFAULT_TALL_MARGIN_MUL; // bredere schermen → smallere textblock breedte
+        double targetTextWidth = ar >= AR_THRESHOLD ? DEFAULT_WIDE_TEXT_WIDTH : DEFAULT_TALL_TEXT_WIDTH; // bredere schermen → smaller tekstblok
+        targetTextWidth = Math.max(0.42, Math.min(0.70, targetTextWidth));
+        double marginHMul = (1.0 - targetTextWidth) / 2.0;
         int marginH = Math.max(MIN_MARGIN_H_PX, (int)Math.round(videoW * marginHMul)); // grotere marge voor meer regelafbreking
 
         return "FontName=Inter Semi Bold"
@@ -91,7 +93,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 + ",Spacing=0"
                 + ",MarginL=" + marginH + ",MarginR=" + marginH + ",MarginV=" + marginV
                 + ",Alignment=2"
-                + ",WrapStyle=2"; // nette regelafbreking
+                + ",WrapStyle=3"; // slimme woordafbreking, behoudt centrering
     }
 
     private static int orDefault(Integer v, int def) { return v != null ? v : def; }
