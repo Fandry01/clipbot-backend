@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.config;
 
+import io.netty.channel.ChannelOption;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -26,10 +27,10 @@ public class FwClientConfig {
 
         HttpClient http = HttpClient.create()
                 .responseTimeout(to)
-                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 15_000)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 15_000)
                 .doOnConnected(conn -> conn
-                        .addHandlerLast(new io.netty.handler.timeout.ReadTimeoutHandler((int) to.getSeconds()))
-                        .addHandlerLast(new io.netty.handler.timeout.WriteTimeoutHandler((int) to.getSeconds()))
+                        .addHandlerLast(new io.netty.handler.timeout.ReadTimeoutHandler(0))
+                        .addHandlerLast(new io.netty.handler.timeout.WriteTimeoutHandler(0))
                 );
 
         return WebClient.builder()

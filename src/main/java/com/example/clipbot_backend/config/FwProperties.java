@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class FwProperties {
     private String baseUrl = "http://127.0.0.1:8000";
     private String model = "Systran/faster-distil-whisper-large-v3";
-    private long timeoutSeconds = 150;
+    private long timeoutSeconds = 5400;
 
     public String getBaseUrl() {
         return baseUrl;
