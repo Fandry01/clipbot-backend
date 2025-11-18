@@ -22,7 +22,7 @@ public class SubtitleServiceImpl implements SubtitleService {
     private static final Logger LOGGER = LoggerFactory.getLogger(SubtitleServiceImpl.class);
     private static final long MIN_CUE_DURATION_MS = 500L;
     private static final long MAX_GAP_MS = 1500L;
-    private static final int MAX_LINE_CHARS = 38;
+    private static final int MAX_LINE_CHARS = 28;
 
     private final StorageService storageService;
 
@@ -169,22 +169,17 @@ public class SubtitleServiceImpl implements SubtitleService {
 
         int bestSplit = 1;
         int bestPenalty = Integer.MAX_VALUE;
-        int bestMax = Integer.MAX_VALUE;
         int bestBalance = Integer.MAX_VALUE;
 
         for (int split = 1; split < words.length; split++) {
             int len1 = joinedLength(words, 0, split);
             int len2 = joinedLength(words, split, words.length);
 
-            int penalty = Math.max(0, len1 - MAX_LINE_CHARS) + Math.max(0, len2 - MAX_LINE_CHARS);
-            int maxLen = Math.max(len1, len2);
+            int penalty = squaredOverflow(len1) + squaredOverflow(len2);
             int balance = Math.abs(len1 - len2);
 
-            if (penalty < bestPenalty
-                    || (penalty == bestPenalty && maxLen < bestMax)
-                    || (penalty == bestPenalty && maxLen == bestMax && balance < bestBalance)) {
+            if (penalty < bestPenalty || (penalty == bestPenalty && balance < bestBalance)) {
                 bestPenalty = penalty;
-                bestMax = maxLen;
                 bestBalance = balance;
                 bestSplit = split;
             }
@@ -193,6 +188,11 @@ public class SubtitleServiceImpl implements SubtitleService {
         String line1 = join(words, 0, bestSplit);
         String line2 = join(words, bestSplit, words.length);
         return line1 + "\n" + line2;
+    }
+
+    private static int squaredOverflow(int len) {
+        int over = Math.max(0, len - MAX_LINE_CHARS);
+        return over * over;
     }
 
     private static int joinedLength(String[] words, int start, int end) {
