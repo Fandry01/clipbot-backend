@@ -65,6 +65,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         int fontPx   = Math.max(14, Math.min(36, (int)Math.round(videoH * mul))); // ~30px @1080p
         int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * 0.08)));  // dunne rand
         int marginV = Math.max(44, (int)Math.round(videoH * 0.006)); // ~32px @1080p
+        int marginH = Math.max(72, (int)Math.round(videoW * 0.05));   // ~96px @1080p, meer ademruimte links/rechts
 
         return "FontName=Inter Semi Bold"
                 + ",FontSize=" + fontPx
@@ -75,7 +76,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 + ",Outline=" + outline
                 + ",Shadow=0"
                 + ",Spacing=0"
-                + ",MarginL=44,MarginR=44,MarginV=" + marginV
+                + ",MarginL=" + marginH + ",MarginR=" + marginH + ",MarginV=" + marginV
                 + ",Alignment=2"
                 + ",WrapStyle=2"; // nette regelafbreking
     }
