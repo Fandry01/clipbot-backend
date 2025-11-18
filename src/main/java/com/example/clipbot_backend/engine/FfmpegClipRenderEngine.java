@@ -62,9 +62,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             // guardrails
             mul = Math.max(0.014, Math.min(0.030, sc));
         }
-        int fontPx   = Math.max(14, Math.min(36, (int)Math.round(videoH * mul))); // ~30px @1080p
+        int fontPx   = Math.max(12, Math.min(32, (int)Math.round(videoH * mul))); // ~30px @1080p
         int outline = Math.max(1, Math.min(2, (int)Math.round(fontPx * 0.08)));  // dunne rand
-        int marginV = Math.max(44, (int)Math.round(videoH * 0.006)); // ~32px @1080p
+        int marginV = Math.max(40, (int)Math.round(videoH * 0.006)); // ~32px @1080p
 
         double marginHMul = ar >= 1.3 ? 0.12 : 0.10; // bredere schermen → smallere textblock breedte
         int marginH = Math.max(96, (int)Math.round(videoW * marginHMul)); // grotere marge voor meer regelafbreking
