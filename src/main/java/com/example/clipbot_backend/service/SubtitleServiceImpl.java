@@ -22,6 +22,7 @@ public class SubtitleServiceImpl implements SubtitleService {
     private static final Logger LOGGER = LoggerFactory.getLogger(SubtitleServiceImpl.class);
     private static final long MIN_CUE_DURATION_MS = 500L;
     private static final long MAX_GAP_MS = 1500L;
+    private static final int MAX_LINE_CHARS = 38;
 
     private final StorageService storageService;
 
@@ -134,7 +135,7 @@ public class SubtitleServiceImpl implements SubtitleService {
                .append(" --> ")
                .append(formatSrtTime(cue.end() - clipStart))
                .append('\n');
-            srt.append(cue.text()).append("\n\n");
+            srt.append(formatCueText(cue.text())).append("\n\n");
         }
         return srt.toString();
     }
@@ -146,9 +147,74 @@ public class SubtitleServiceImpl implements SubtitleService {
                .append(" --> ")
                .append(formatVttTime(cue.end() - clipStart))
                .append('\n');
-            vtt.append(cue.text()).append("\n\n");
+            vtt.append(formatCueText(cue.text())).append("\n\n");
         }
         return vtt.toString();
+    }
+
+    private static String formatCueText(String text) {
+        if (text == null) {
+            return "";
+        }
+
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        if (normalized.isEmpty() || normalized.length() <= MAX_LINE_CHARS) {
+            return normalized;
+        }
+
+        String[] words = normalized.split(" ");
+        if (words.length <= 1) {
+            return normalized;
+        }
+
+        int bestSplit = 1;
+        int bestPenalty = Integer.MAX_VALUE;
+        int bestMax = Integer.MAX_VALUE;
+        int bestBalance = Integer.MAX_VALUE;
+
+        for (int split = 1; split < words.length; split++) {
+            int len1 = joinedLength(words, 0, split);
+            int len2 = joinedLength(words, split, words.length);
+
+            int penalty = Math.max(0, len1 - MAX_LINE_CHARS) + Math.max(0, len2 - MAX_LINE_CHARS);
+            int maxLen = Math.max(len1, len2);
+            int balance = Math.abs(len1 - len2);
+
+            if (penalty < bestPenalty
+                    || (penalty == bestPenalty && maxLen < bestMax)
+                    || (penalty == bestPenalty && maxLen == bestMax && balance < bestBalance)) {
+                bestPenalty = penalty;
+                bestMax = maxLen;
+                bestBalance = balance;
+                bestSplit = split;
+            }
+        }
+
+        String line1 = join(words, 0, bestSplit);
+        String line2 = join(words, bestSplit, words.length);
+        return line1 + "\n" + line2;
+    }
+
+    private static int joinedLength(String[] words, int start, int end) {
+        int len = 0;
+        for (int i = start; i < end; i++) {
+            len += words[i].length();
+            if (i < end - 1) {
+                len += 1; // space
+            }
+        }
+        return len;
+    }
+
+    private static String join(String[] words, int start, int end) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(words[i]);
+        }
+        return sb.toString();
     }
 
     private static String formatSrtTime(long offsetMs) {
