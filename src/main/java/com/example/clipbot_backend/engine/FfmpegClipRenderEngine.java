@@ -67,6 +67,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         int marginV = Math.max(44, (int)Math.round(videoH * 0.006)); // ~32px @1080p
         int marginH = Math.max(72, (int)Math.round(videoW * 0.05));   // ~96px @1080p, meer ademruimte links/rechts
 
+        double marginHMul = ar >= 1.3 ? 0.12 : 0.10; // bredere schermen → smallere textblock breedte
+        int marginH = Math.max(96, (int)Math.round(videoW * marginHMul)); // grotere marge voor meer regelafbreking
+
         return "FontName=Inter Semi Bold"
                 + ",FontSize=" + fontPx
                 + ",PrimaryColour=&H00FFFFFF"
