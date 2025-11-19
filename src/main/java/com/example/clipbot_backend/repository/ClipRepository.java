@@ -23,6 +23,12 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
     List<StatusCount> countByMediaInGroupByStatus(List<Media> media);
     interface StatusCount { ClipStatus getStatus(); long getCnt(); }
 
+    /**
+     * Loads a clip with its media and media owner eagerly fetched.
+     *
+     * @param id clip identifier.
+     * @return optional clip including media and owner relations.
+     */
     @Query("""
            select c
            from Clip c
@@ -31,5 +37,31 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
            where c.id = :id
            """)
     Optional<Clip> findByIdWithMedia(@Param("id") UUID id);
+
+    /**
+     * Returns clips for the given media ordered by descending recommendation score.
+     *
+     * @param mediaId media identifier.
+     * @param pageable pagination information.
+     * @return clips sorted by score and creation time.
+     */
+    @Query("""
+            select c
+            from Clip c
+            where c.media.id = :mediaId
+            order by coalesce(c.score, 0) desc, c.createdAt desc
+            """)
+    List<Clip> findByMediaIdOrderByScoreDesc(@Param("mediaId") UUID mediaId, Pageable pageable);
+
+    /**
+     * Looks up a clip by media range and profile hash combination.
+     *
+     * @param mediaId media identifier.
+     * @param startMs start offset in milliseconds.
+     * @param endMs end offset in milliseconds.
+     * @param profileHash render profile hash.
+     * @return optional clip matching the unique combination.
+     */
+    Optional<Clip> findByMediaIdAndStartMsAndEndMsAndProfileHash(UUID mediaId, long startMs, long endMs, String profileHash);
 
 }

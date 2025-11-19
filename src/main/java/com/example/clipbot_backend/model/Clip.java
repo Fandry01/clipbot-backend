@@ -6,11 +6,17 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
+
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
 @Entity
+@Table(name = "clip", uniqueConstraints = {
+        @UniqueConstraint(name = "ux_clip_media_range_profile",
+                columnNames = {"media_id", "start_ms", "end_ms", "profile_hash"})
+})
 public class Clip {
     @Id
     @GeneratedValue
@@ -47,6 +53,12 @@ public class Clip {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "meta")
     private Map<String, Object> meta;
+
+    @Column(name = "profile_hash", nullable = false, columnDefinition = "text")
+    private String profileHash = "";
+
+    @Column(name = "score", precision = 6, scale = 3)
+    private BigDecimal score;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -87,6 +99,31 @@ public class Clip {
     public Instant getCreatedAt() { return createdAt; }
     public long getVersion() { return version; }
 
+    /**
+     * Returns the render profile hash that differentiates clips with identical ranges.
+     *
+     * @return profile hash, never {@code null}.
+     */
+    public String getProfileHash() { return profileHash; }
 
+    /**
+     * Updates the profile hash used for deduplicating clip ranges.
+     *
+     * @param profileHash profile hash value, must not be {@code null}.
+     */
+    public void setProfileHash(String profileHash) { this.profileHash = profileHash; }
 
+    /**
+     * Returns the recommendation score assigned to the clip.
+     *
+     * @return score or {@code null} when no score is known.
+     */
+    public BigDecimal getScore() { return score; }
+
+    /**
+     * Stores the recommendation score for the clip.
+     *
+     * @param score score value or {@code null}.
+     */
+    public void setScore(BigDecimal score) { this.score = score; }
 }
