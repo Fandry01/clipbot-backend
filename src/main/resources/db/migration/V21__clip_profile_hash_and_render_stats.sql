@@ -12,6 +12,17 @@ ALTER TABLE clip
 ALTER TABLE clip
     ADD COLUMN IF NOT EXISTS score NUMERIC(6,3);
 
+WITH ranked AS (
+    SELECT id,
+           ROW_NUMBER() OVER (
+               PARTITION BY media_id, start_ms, end_ms, profile_hash
+               ORDER BY created_at NULLS LAST, id
+           ) AS rn
+    FROM clip
+)
+DELETE FROM clip
+WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_clip_media_range_profile
     ON clip(media_id, start_ms, end_ms, profile_hash);
 
