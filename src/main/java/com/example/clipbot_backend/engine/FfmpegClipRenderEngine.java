@@ -310,6 +310,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         RenderSpec defaults = switch (spec.profile()) {
             case "tiktok-9x16" -> new RenderSpec(1080, 1920, 30, 23, "veryfast", "tiktok-9x16");
             case "youtube-1080p" -> new RenderSpec(1920, 1080, 30, 23, "fast", "youtube-1080p");
+            case "youtube-720p" -> new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p");
             default -> null;
         };
         if (defaults == null) return spec;

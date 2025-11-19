@@ -54,6 +54,17 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
     List<Clip> findByMediaIdOrderByScoreDesc(@Param("mediaId") UUID mediaId, Pageable pageable);
 
     /**
+     * Returns a pageable list of clips for a given media id.
+     *
+     * @param mediaId media identifier.
+     * @param pageable pagination instructions (sorting is applied from pageable).
+     * @return page with clip entities.
+     */
+    @Query(value = "select c from Clip c where c.media.id = :mediaId",
+            countQuery = "select count(c) from Clip c where c.media.id = :mediaId")
+    Page<Clip> findPageByMediaId(@Param("mediaId") UUID mediaId, Pageable pageable);
+
+    /**
      * Looks up a clip by media range and profile hash combination.
      *
      * @param mediaId media identifier.
