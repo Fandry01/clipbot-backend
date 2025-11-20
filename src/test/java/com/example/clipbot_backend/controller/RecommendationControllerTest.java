@@ -52,7 +52,7 @@ class RecommendationControllerTest {
     void computeEndpointTriggersService() throws Exception {
         UUID mediaId = UUID.randomUUID();
         Media media = buildMedia("user-1");
-        when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
+        when(mediaRepository.findOwned(mediaId, "user-1")).thenReturn(Optional.of(media));
         RecommendationResult result = new RecommendationResult(mediaId, 1,
                 List.of(new ClipSummary(UUID.randomUUID(), 0, 20_000, BigDecimal.valueOf(0.9), "QUEUED", "abc")));
         when(recommendationService.computeRecommendations(eq(mediaId), eq(3), any(), eq(true))).thenReturn(result);
@@ -75,7 +75,7 @@ class RecommendationControllerTest {
     void listEndpointReturnsPagedClips() throws Exception {
         UUID mediaId = UUID.randomUUID();
         Media media = buildMedia("owner-subj");
-        when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
+        when(mediaRepository.findOwned(mediaId, "owner-subj")).thenReturn(Optional.of(media));
         ClipSummary summary = new ClipSummary(UUID.randomUUID(), 1000, 8000, BigDecimal.valueOf(0.5), "READY", "hash");
         when(recommendationService.listRecommendations(eq(mediaId), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(summary)));
@@ -99,7 +99,7 @@ class RecommendationControllerTest {
     void explainEndpointReturnsBreakdown() throws Exception {
         UUID mediaId = UUID.randomUUID();
         Media media = buildMedia("owner");
-        when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
+        when(mediaRepository.findOwned(mediaId, "owner")).thenReturn(Optional.of(media));
         when(recommendationService.explain(mediaId, 1000L, 5000L)).thenReturn(Map.of("1000-5000", "details"));
 
         mockMvc.perform(get("/v1/media/{mediaId}/recommendations/explain", mediaId)
@@ -108,6 +108,45 @@ class RecommendationControllerTest {
                         .param("ownerExternalSubject", "owner"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.['1000-5000']").value("details"));
+    }
+
+    @Test
+    void computeClampsTopNToUpperBound() throws Exception {
+        UUID mediaId = UUID.randomUUID();
+        Media media = buildMedia("owner-subj");
+        when(mediaRepository.findOwned(mediaId, "owner-subj")).thenReturn(Optional.of(media));
+        RecommendationResult result = new RecommendationResult(mediaId, 1,
+                List.of(new ClipSummary(UUID.randomUUID(), 0, 20_000, BigDecimal.valueOf(0.9), "QUEUED", "abc")));
+        when(recommendationService.computeRecommendations(eq(mediaId), eq(12), any(), eq(true))).thenReturn(result);
+
+        String body = objectMapper.writeValueAsString(Map.of("topN", 50));
+
+        mockMvc.perform(post("/v1/media/{mediaId}/recommendations/compute", mediaId)
+                        .param("ownerExternalSubject", "owner-subj")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listInvalidSortFallsBackToScore() throws Exception {
+        UUID mediaId = UUID.randomUUID();
+        Media media = buildMedia("owner-subj");
+        when(mediaRepository.findOwned(mediaId, "owner-subj")).thenReturn(Optional.of(media));
+        ClipSummary summary = new ClipSummary(UUID.randomUUID(), 1000, 8000, BigDecimal.valueOf(0.5), "READY", "hash");
+        when(recommendationService.listRecommendations(eq(mediaId), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(summary)));
+
+        mockMvc.perform(get("/v1/media/{mediaId}/recommendations", mediaId)
+                        .param("sort", "unknown,asc")
+                        .param("ownerExternalSubject", "owner-subj"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].status").value("READY"));
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(recommendationService).listRecommendations(eq(mediaId), pageableCaptor.capture());
+        assertThat(pageableCaptor.getValue().getSort().getOrderFor("score")).isNotNull();
+        assertThat(pageableCaptor.getValue().getSort().getOrderFor("createdAt")).isNotNull();
     }
 
     private static Media buildMedia(String ownerSubject) {

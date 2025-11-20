@@ -1,9 +1,9 @@
 package com.example.clipbot_backend.controller;
 
+import com.example.clipbot_backend.api.dto.PageResponse;
 import com.example.clipbot_backend.dto.ClipSummary;
 import com.example.clipbot_backend.dto.RecommendationResult;
 import com.example.clipbot_backend.dto.web.ComputeRequest;
-import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.service.RecommendationService;
@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
-import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -54,9 +54,10 @@ public class RecommendationController {
                                         @RequestBody(required = false) ComputeRequest body,
                                         @RequestParam String ownerExternalSubject) {
         Media media = ensureOwned(mediaId, ownerExternalSubject);
-        int topN = body != null && body.topN() != null ? body.topN() : 6;
+        int reqTopN = body != null && body.topN() != null ? body.topN() : 6;
+        int topN = Math.max(1, Math.min(12, reqTopN));
         Map<String, Object> profile = body != null && body.profile() != null ? body.profile() : Map.of();
-        boolean enqueue = body == null || body.enqueueRender() == null ? true : body.enqueueRender();
+        boolean enqueue = body == null || body.enqueueRender() == null || body.enqueueRender();
         return recommendationService.computeRecommendations(media.getId(), topN, profile, enqueue);
     }
 
@@ -71,14 +72,15 @@ public class RecommendationController {
      * @return pageable list of clip summaries.
      */
     @GetMapping
-    public Page<ClipSummary> list(@PathVariable UUID mediaId,
-                                  @RequestParam(defaultValue = "0") int page,
-                                  @RequestParam(defaultValue = "20") int size,
-                                  @RequestParam(defaultValue = "score,desc") String sort,
-                                  @RequestParam String ownerExternalSubject) {
+    public PageResponse<ClipSummary> list(@PathVariable UUID mediaId,
+                                          @RequestParam(defaultValue = "0") int page,
+                                          @RequestParam(defaultValue = "20") int size,
+                                          @RequestParam(defaultValue = "score,desc") String sort,
+                                          @RequestParam String ownerExternalSubject) {
         ensureOwned(mediaId, ownerExternalSubject);
         Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, size), parseSort(sort));
-        return recommendationService.listRecommendations(mediaId, pageable);
+        Page<ClipSummary> result = recommendationService.listRecommendations(mediaId, pageable);
+        return new PageResponse<>(result.getContent(), result.getNumber(), result.getSize(), result.getTotalElements());
     }
 
     /**
@@ -103,23 +105,23 @@ public class RecommendationController {
     }
 
     private Media ensureOwned(UUID mediaId, String ownerExternalSubject) {
-        Media media = mediaRepository.findById(mediaId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
-        Account owner = media.getOwner();
-        if (owner == null || !Objects.equals(owner.getExternalSubject(), ownerExternalSubject)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
-        }
-        return media;
+        return mediaRepository.findOwned(mediaId, ownerExternalSubject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED_OR_NOT_FOUND"));
     }
+
+    private static final Set<String> ALLOWED_SORT = Set.of("score", "createdAt", "startMs", "endMs");
 
     private static Sort parseSort(String sort) {
         if (sort == null || sort.isBlank()) {
             return Sort.by(Sort.Order.desc("score"), Sort.Order.desc("createdAt"));
         }
         String[] parts = sort.split(",");
-        String property = parts[0].trim();
-        Sort.Direction direction = parts.length > 1 && "asc".equalsIgnoreCase(parts[1])
+        String prop = parts[0].trim();
+        if (!ALLOWED_SORT.contains(prop)) {
+            return Sort.by(Sort.Order.desc("score"), Sort.Order.desc("createdAt"));
+        }
+        Sort.Direction dir = (parts.length > 1 && "asc".equalsIgnoreCase(parts[1]))
                 ? Sort.Direction.ASC : Sort.Direction.DESC;
-        return Sort.by(new Sort.Order(direction, property), Sort.Order.desc("createdAt"));
+        return Sort.by(new Sort.Order(dir, prop), Sort.Order.desc("createdAt"));
     }
 }

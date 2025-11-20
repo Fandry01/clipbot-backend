@@ -61,9 +61,9 @@ public class RecommendationServiceImpl implements RecommendationService {
     private static final Logger LOGGER = LoggerFactory.getLogger(RecommendationServiceImpl.class);
     private static final int DEFAULT_TOP_N = 6;
     private static final long MIN_WINDOW_MS = 15_000L;
-    private static final long MAX_WINDOW_MS = 60_000L;
-    private static final double DEFAULT_CONFIDENCE = 0.75;
-    private static final double MAX_WORDS_PER_SECOND = 3.5;
+    private static final long MAX_WINDOW_MS = 35_000L;
+    private static final double DEFAULT_CONFIDENCE = 0.85;
+    private static final double MAX_WORDS_PER_SECOND = 4.5;
     private static final String DEFAULT_RENDER_PROFILE = "youtube-720p";
 
     private final MediaRepository mediaRepo;
@@ -102,25 +102,27 @@ public class RecommendationServiceImpl implements RecommendationService {
     @Override
     public RecommendationResult computeRecommendations(UUID mediaId, int topN, @Nullable Map<String, Object> profile, boolean enqueueRender) {
         Objects.requireNonNull(mediaId, "mediaId");
-        int limit = topN > 0 ? topN : DEFAULT_TOP_N;
+        int limit = Math.max(1, Math.min(12, topN > 0 ? topN : DEFAULT_TOP_N));
         Map<String, Object> effectiveProfile = profile == null ? Map.of() : profile;
         long started = System.nanoTime();
         RecommendationInput input = loadInput(mediaId);
         SelectorConfig baseCfg = SelectorConfig.defaults();
         Set<String> keywordPool = deriveKeywords(input.words(), effectiveProfile);
+        Set<String> normalizedBoost = normalizeKeywords(keywordPool);
         SelectorConfig selectorConfig = new SelectorConfig(
                 baseCfg.targetDurationSec(),
                 baseCfg.minSpeechDensity(),
                 baseCfg.maxSilencePenalty(),
-                keywordPool,
+                normalizedBoost,
                 baseCfg.weights()
         );
 
         List<Window> windows = buildWindows(input.media(), input.segments(), input.words(), selectorConfig);
         List<ScoredWindow> scored = goodClipSelector.selectTop(windows, limit, selectorConfig);
-        LOGGER.info("RecommendationService start media={} windows={} selected={} topScores={}",
+        LOGGER.info("RecommendationService start media={} windows={} topN={} selected={} topScores={}",
                 mediaId,
                 windows.size(),
+                limit,
                 scored.size(),
                 scored.stream().map(sw -> String.format(Locale.ROOT, "%.3f", sw.score())).collect(Collectors.joining(",")));
 
@@ -132,8 +134,6 @@ public class RecommendationServiceImpl implements RecommendationService {
         for (ScoredWindow scoredWindow : scored) {
             Window window = scoredWindow.window();
             UpsertOutcome outcome = upsertClip(mediaId, profileHash, scoredWindow.score(), window, effectiveProfile);
-            LOGGER.info("RecommendationService upsert clip start={} end={} profileHash={} created={} score={}",
-                    window.startMs(), window.endMs(), profileHash, outcome.created(), outcome.score());
             summaries.add(new ClipSummary(outcome.clipId(), window.startMs(), window.endMs(), outcome.score(), outcome.status().name(), profileHash));
 
             if (enqueueRender && outcome.created()) {
@@ -147,7 +147,7 @@ public class RecommendationServiceImpl implements RecommendationService {
                 }
                 enqueueRender(outcome.clipId(), mediaId, renderProfile);
             } else if (enqueueRender) {
-                LOGGER.info("RecommendationService render skipped clip={} reason=existing", outcome.clipId());
+                LOGGER.info("RecommendationService render skipped clip={} profile={} reason=existing", outcome.clipId(), renderProfile);
             }
         }
 
@@ -179,11 +179,12 @@ public class RecommendationServiceImpl implements RecommendationService {
         RecommendationInput input = loadInput(mediaId);
         SelectorConfig baseCfg = SelectorConfig.defaults();
         Set<String> keywordPool = deriveKeywords(input.words(), Map.of());
+        Set<String> normalizedBoost = normalizeKeywords(keywordPool);
         SelectorConfig selectorConfig = new SelectorConfig(
                 baseCfg.targetDurationSec(),
                 baseCfg.minSpeechDensity(),
                 baseCfg.maxSilencePenalty(),
-                keywordPool,
+                normalizedBoost,
                 baseCfg.weights()
         );
         List<Window> windows = buildWindows(input.media(), input.segments(), input.words(), selectorConfig);
@@ -215,6 +216,12 @@ public class RecommendationServiceImpl implements RecommendationService {
                 if (oldScore == null || oldScore.compareTo(newScore) < 0) {
                     existing.setScore(newScore);
                     clipRepo.save(existing);
+                    LOGGER.info("RecommendationService upsert clip start={} end={} profileHash={} status=existing score improved {}->{} clipId={}",
+                            window.startMs(), window.endMs(), profileHash, oldScore, newScore, existing.getId());
+                }
+                if (oldScore != null && oldScore.compareTo(newScore) >= 0) {
+                    LOGGER.info("RecommendationService upsert clip start={} end={} profileHash={} status=existing kept existing score (old>=new) clipId={}",
+                            window.startMs(), window.endMs(), profileHash, existing.getId());
                 }
                 return new UpsertOutcome(existing.getId(), existing.getStatus(), newScore, false);
             }
@@ -226,6 +233,8 @@ public class RecommendationServiceImpl implements RecommendationService {
             clip.setScore(newScore);
             clip.setMeta(buildMeta(profile));
             Clip saved = clipRepo.save(clip);
+            LOGGER.info("RecommendationService upsert clip start={} end={} profileHash={} status=created score={} clipId={}",
+                    window.startMs(), window.endMs(), profileHash, newScore, saved.getId());
             return new UpsertOutcome(saved.getId(), saved.getStatus(), newScore, true);
         });
     }
@@ -261,6 +270,18 @@ public class RecommendationServiceImpl implements RecommendationService {
         sorted.forEach(entry -> result.add(entry.getKey()));
         extractProfileKeywords(profile, result);
         return Set.copyOf(result);
+    }
+
+    private static Set<String> normalizeKeywords(Set<String> keywordPool) {
+        if (keywordPool == null || keywordPool.isEmpty()) {
+            return Set.of();
+        }
+        return keywordPool.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static void extractProfileKeywords(Map<String, Object> profile, Set<String> target) {

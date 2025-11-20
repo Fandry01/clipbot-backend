@@ -23,4 +23,11 @@ public interface MediaRepository extends JpaRepository<Media, UUID> {
        where m.id = :id
        """)
     Optional<Media> findByIdWithOwner(@Param("id") UUID id);
+
+    @Query("""
+           select m from Media m
+           join fetch m.owner o
+           where m.id = :id and o.externalSubject = :subj
+           """)
+    Optional<Media> findOwned(@Param("id") UUID id, @Param("subj") String subj);
 }
