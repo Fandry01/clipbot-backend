@@ -10,5 +10,5 @@ public record RenderSpec(@Min(144) @Max(7680) Integer width,
                          String preset,
                          String profile) {
     public static final RenderSpec DEFAULT =
-            new RenderSpec(1920, 1080, 30, 18, "medium", "high");
+            new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p");
 }
