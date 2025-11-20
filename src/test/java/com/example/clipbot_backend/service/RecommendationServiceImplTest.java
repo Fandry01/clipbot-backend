@@ -23,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.transaction.support.ResourcelessTransactionManager;
+import org.springframework.transaction.support.PseudoTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -64,7 +64,7 @@ class RecommendationServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        TransactionTemplate template = new TransactionTemplate(new ResourcelessTransactionManager());
+        TransactionTemplate template = new TransactionTemplate(new PseudoTransactionManager());
         service = new RecommendationServiceImpl(mediaRepository, clipRepository, segmentRepository, transcriptRepository,
                 subtitleService, jobService, new HeuristicGoodClipSelector(), objectMapper, template);
     }
