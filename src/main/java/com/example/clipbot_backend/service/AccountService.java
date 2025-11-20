@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.config.PlansProperties;
 import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.repository.AccountRepository;
 import jakarta.annotation.Nullable;
@@ -10,25 +11,33 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Service
 public class AccountService {
     private final AccountRepository accountRepo;
+    private final PlansProperties plansProperties;
     private static final Logger log = LoggerFactory.getLogger(AccountService.class);
 
-    public AccountService(AccountRepository accountRepo) {
+    public AccountService(AccountRepository accountRepo, PlansProperties plansProperties) {
         this.accountRepo = accountRepo;
+        this.plansProperties = plansProperties;
     }
     public Account ensureByExternalSubject(String externalSubject, @Nullable String displayName) {
         var normalized = externalSubject.trim();
         return accountRepo.findByExternalSubject(normalized)
                 .orElseGet(() -> {
                     log.info("Creating new Account for externalSubject={}", normalized);
-                    return accountRepo.save(new Account(
+                    Account acc = new Account(
                             normalized,
                             displayName != null ? displayName : "User"
-                    ));
+                    );
+                    if (plansProperties.getTrialDays() > 0) {
+                        acc.setTrialEndsAt(Instant.now().plus(plansProperties.getTrialDays(), ChronoUnit.DAYS));
+                    }
+                    return accountRepo.save(acc);
                 });
     }
     @Transactional(readOnly = true)

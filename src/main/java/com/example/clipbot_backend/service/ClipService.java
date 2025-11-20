@@ -1,12 +1,17 @@
 package com.example.clipbot_backend.service;
 
 
+import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Job;
+import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
+import com.example.clipbot_backend.service.EntitlementService;
+import com.example.clipbot_backend.service.EntitlementService.RenderPolicy;
+import com.example.clipbot_backend.service.RenderProfileResolver;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobStatus;
 import com.example.clipbot_backend.util.JobType;
@@ -29,12 +34,16 @@ public class ClipService {
     private final MediaRepository mediaRepo;
     private final SegmentRepository segmentRepo;
     private final JobRepository jobRepo;
+    private final EntitlementService entitlementService;
+    private final RenderProfileResolver renderProfileResolver;
 
-    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo) {
+    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo, EntitlementService entitlementService, RenderProfileResolver renderProfileResolver) {
         this.clipRepo = clipRepo;
         this.mediaRepo = mediaRepo;
         this.segmentRepo = segmentRepo;
         this.jobRepo = jobRepo;
+        this.entitlementService = entitlementService;
+        this.renderProfileResolver = renderProfileResolver;
     }
 
     @Transactional
@@ -93,6 +102,13 @@ public class ClipService {
     @Transactional
     public UUID enqueueRender(JobService jobs, UUID clipId) {
         var clip = get(clipId);
+        Media media = clip.getMedia();
+        var owner = media.getOwner();
+        RenderPolicy policy = entitlementService.checkCanRender(owner, RenderSpec.DEFAULT);
+        if (!policy.allow()) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, policy.reason());
+        }
+        RenderSpec resolvedSpec = renderProfileResolver.resolve(RenderSpec.DEFAULT, policy);
         String dedup = "clip:" + clipId;
 
         // status naar QUEUED als hij nog niet in de renderflow zit
@@ -101,11 +117,20 @@ public class ClipService {
             clipRepo.saveAndFlush(clip);
         }
 
-        Map<String,Object> payload = Map.of("clipId", clipId.toString());
+        Map<String,Object> payload = Map.of(
+                "clipId", clipId.toString(),
+                "profile", resolvedSpec.profile(),
+                "watermarkEnabled", resolvedSpec.watermarkEnabled(),
+                "watermarkPath", resolvedSpec.watermarkPath()
+        );
         // mediaId is handig voor correlatie, neem die mee
-        UUID mediaId = clip.getMedia() != null ? clip.getMedia().getId() : null;
+        UUID mediaId = media != null ? media.getId() : null;
 
-        return jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
+        UUID jobId = jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
+        entitlementService.burnOneRender(owner);
+        org.slf4j.LoggerFactory.getLogger(ClipService.class)
+                .info("Render enqueued account={} plan={} profile={} watermark={}", owner.getId(), owner.getPlanTier(), resolvedSpec.profile(), resolvedSpec.watermarkEnabled());
+        return jobId;
     }
 
 
