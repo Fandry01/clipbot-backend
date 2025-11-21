@@ -43,12 +43,17 @@ public class AccountService {
     @Transactional(readOnly = true)
     public Account getByExternalSubjectOrThrow(String externalSubject) {
         return accountRepo.findByExternalSubject(externalSubject)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OWNER_NOT_FOUND"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND"));
     }
 
     @Transactional(readOnly = true)
     public Account getByIdOrThrow(UUID id) {
         return accountRepo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OWNER_NOT_FOUND"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND"));
+    }
+    @Transactional(readOnly = true)
+    public boolean isAdmin(String ext) {
+        var acc = getByExternalSubjectOrThrow(ext);
+        return acc.isAdmin();
     }
 }

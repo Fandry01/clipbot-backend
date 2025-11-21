@@ -6,6 +6,7 @@ import com.example.clipbot_backend.model.PlanLimits;
 import com.example.clipbot_backend.model.PlanTier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -17,75 +18,55 @@ import java.util.Objects;
 @Service
 public class EntitlementService {
     private static final Logger LOGGER = LoggerFactory.getLogger(EntitlementService.class);
-    private final PlanConfigService planConfigService;
-    private final UsageService usageService;
 
-    public EntitlementService(PlanConfigService planConfigService, UsageService usageService) {
-        this.planConfigService = planConfigService;
-        this.usageService = usageService;
+    private final PlanConfigService plans;
+    private final UsageService usage;
+
+    public record Decision(boolean allow, String reason,
+                           String forcedProfile, boolean watermark) {
+
     }
 
-    /**
-     * Determines whether the provided account can render the requested spec.
-     *
-     * @param account account owner
-     * @param requestedSpec requested render spec (nullable)
-     * @return render policy indicating allow/deny, enforced profile and watermark state
-     */
-    public RenderPolicy checkCanRender(Account account, RenderSpec requestedSpec) {
-        Objects.requireNonNull(account, "account");
-        PlanTier tier = account.getPlanTier() == null ? PlanTier.TRIAL : account.getPlanTier();
-        if (tier == PlanTier.TRIAL && account.getTrialEndsAt() != null && account.getTrialEndsAt().isBefore(Instant.now())) {
-            LOGGER.info("EntitlementService deny account={} plan={} reason=TRIAL_EXPIRED", account.getId(), tier);
-            return new RenderPolicy(false, "TRIAL_EXPIRED", true, "youtube-720p");
-        }
-        PlanLimits limits = planConfigService.getLimits(tier);
-        UsageService.UsageSnapshot usage = usageService.getUsage(account);
-        if (usage.rendersToday() >= limits.getMaxRendersDay()) {
-            LOGGER.info("EntitlementService deny account={} plan={} reason=QUOTA_EXCEEDED today={}", account.getId(), tier, usage.rendersToday());
-            LOGGER.debug("EntitlementService limits day={} month={}", limits.getMaxRendersDay(), limits.getMaxRendersMonth());
-            return new RenderPolicy(false, "QUOTA_EXCEEDED", limits.isWatermark(), null);
-        }
-        if (usage.rendersMonth() >= limits.getMaxRendersMonth()) {
-            LOGGER.info("EntitlementService deny account={} plan={} reason=QUOTA_EXCEEDED month={}", account.getId(), tier, usage.rendersMonth());
-            LOGGER.debug("EntitlementService limits day={} month={}", limits.getMaxRendersDay(), limits.getMaxRendersMonth());
-            return new RenderPolicy(false, "QUOTA_EXCEEDED", limits.isWatermark(), null);
-        }
-        if (requestedSpec != null && requestedSpec.height() != null) {
-            int height = requestedSpec.height();
-            if (height > 1080 && !limits.isAllow4k()) {
-                LOGGER.info("EntitlementService deny account={} plan={} reason=UPGRADE_REQUIRED requestedHeight={}", account.getId(), tier, height);
-                return new RenderPolicy(false, "UPGRADE_REQUIRED", limits.isWatermark(), null);
-            }
-            if (height > 720 && !limits.isAllow1080p()) {
-                LOGGER.info("EntitlementService deny account={} plan={} reason=UPGRADE_REQUIRED requestedHeight={}", account.getId(), tier, height);
-                return new RenderPolicy(false, "UPGRADE_REQUIRED", limits.isWatermark(), null);
-            }
-        }
-        boolean watermark = tier == PlanTier.TRIAL || limits.isWatermark();
-        String forcedProfile = tier == PlanTier.TRIAL ? "youtube-720p" : null;
-        LOGGER.info("EntitlementService allow account={} plan={} watermark={} forcedProfile={}", account.getId(), tier, watermark, forcedProfile);
-        LOGGER.debug("EntitlementService usage today={} month={} limitsDay={} limitsMonth={}", usage.rendersToday(), usage.rendersMonth(), limits.getMaxRendersDay(), limits.getMaxRendersMonth());
-        return new RenderPolicy(true, null, watermark, forcedProfile);
+    public EntitlementService(PlanConfigService plans, UsageService usage) {
+        this.plans = plans;
+        this.usage = usage;
     }
 
-    /**
-     * Burns one render unit for the given account.
-     *
-     * @param account account owner
-     */
-    public void burnOneRender(Account account) {
-        usageService.incrementRenders(account);
+    public Decision checkCanRender(Account acc, @Nullable String requestedProfile) {
+        if (acc.isAdmin()) {
+            // Admin: alles mag, geen watermark, respecteer aangevraagd profiel (fallback 1080p)
+            String prof = (requestedProfile == null || requestedProfile.isBlank())
+                    ? "youtube-1080p" : requestedProfile;
+            return new Decision(true, "ADMIN_OK", prof, false);
+        }
+
+        var limits = plans.getLimits(acc.getPlanTier());
+        var snap = usage.getUsage(acc);
+
+        // Trial verlopen?
+        if (acc.getPlanTier() == PlanTier.TRIAL && acc.getTrialEndsAt() != null
+                && acc.getTrialEndsAt().isBefore(Instant.now())) {
+            return new Decision(false, "TRIAL_EXPIRED", null, true);
+        }
+        // Quota
+        if (snap.rendersToday() >= limits.getMaxRendersDay()) {
+            return new Decision(false, "QUOTA_DAY_EXCEEDED", null, limits.isWatermark());
+        }
+        if (snap.rendersMonth() >= limits.getMaxRendersMonth()) {
+            return new Decision(false, "QUOTA_MONTH_EXCEEDED", null, limits.isWatermark());
+        }
+
+        // Profiel afdwingen (max 720 op TRIAL als 1080 niet toegestaan)
+        String forced = requestedProfile;
+        if (!limits.isAllow1080p()) {
+            forced = "youtube-720p";
+        }
+        return new Decision(true, "OK", forced, limits.isWatermark());
     }
 
-    /**
-     * Immutable render policy DTO.
-     *
-     * @param allow whether rendering is permitted
-     * @param reason optional denial code
-     * @param watermark whether watermarking must be applied
-     * @param forcedProfile profile override when not null
-     */
-    public record RenderPolicy(boolean allow, String reason, boolean watermark, String forcedProfile) {
+    /** Call direct na enqueue, niet pas na render-complete. */
+    public void burnOneRender(Account acc) {
+        if (acc.isAdmin()) return; // admin telt niet mee
+        usage.incrementRenders(acc);
     }
 }

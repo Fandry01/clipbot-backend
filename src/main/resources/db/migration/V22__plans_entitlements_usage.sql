@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS plan_limits (
   watermark BOOLEAN NOT NULL
 );
 
+
 -- Seed defaults (kan ook via data-init in code)
 INSERT INTO plan_limits(plan, max_renders_day, max_renders_month, allow_1080p, allow_4k, watermark) VALUES
 ('TRIAL',   10,   60, false, false, true)
@@ -36,3 +37,8 @@ ON CONFLICT (plan) DO NOTHING;
 INSERT INTO plan_limits(plan, max_renders_day, max_renders_month, allow_1080p, allow_4k, watermark) VALUES
 ('PRO',    120, 1200, true,  false, false)
 ON CONFLICT (plan) DO NOTHING;
+
+-- Snellere maand-queries
+CREATE INDEX IF NOT EXISTS ix_usage_month ON usage_counters(account_id, month_key);
+-- Zorg dat plan_tier nooit NULL is (backfill safety)
+UPDATE account SET plan_tier = 'TRIAL' WHERE plan_tier IS NULL;

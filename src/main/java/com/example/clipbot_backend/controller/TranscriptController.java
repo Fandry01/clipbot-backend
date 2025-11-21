@@ -6,6 +6,7 @@ import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.TranscriptService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,12 +26,14 @@ import java.util.stream.Collectors;
 public class TranscriptController {
     private final TranscriptService transcriptService;
     private final TranscriptRepository transcriptRepo;
+    private final AccountService accountService;
     private final MediaRepository mediaRepo;
     private final ObjectMapper om; //
 
-    public TranscriptController(TranscriptService transcriptService, TranscriptRepository transcriptRepo, MediaRepository mediaRepo, ObjectMapper om) {
+    public TranscriptController(TranscriptService transcriptService, TranscriptRepository transcriptRepo, AccountService accountService, MediaRepository mediaRepo, ObjectMapper om) {
         this.transcriptService = transcriptService;
         this.transcriptRepo = transcriptRepo;
+        this.accountService = accountService;
         this.mediaRepo = mediaRepo;
         this.om = om;
     }
@@ -208,8 +211,13 @@ public class TranscriptController {
     }
 
     private void ensureOwnedBy(Media media, String subject) {
+        if (isAdmin(subject)) return; // admin bypass
         String ownerSub = media.getOwner().getExternalSubject();
         if (!Objects.equals(ownerSub, subject))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
+    }
+
+    private boolean isAdmin(String sub) {
+        try { return accountService.isAdmin(sub); } catch (Exception e) { return false; }
     }
 }

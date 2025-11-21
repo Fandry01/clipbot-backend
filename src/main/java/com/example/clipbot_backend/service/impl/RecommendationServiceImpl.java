@@ -5,10 +5,7 @@ import com.example.clipbot_backend.dto.RecommendationResult;
 import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.dto.WordsParser;
-import com.example.clipbot_backend.model.Clip;
-import com.example.clipbot_backend.model.Media;
-import com.example.clipbot_backend.model.Segment;
-import com.example.clipbot_backend.model.Transcript;
+import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
@@ -17,10 +14,7 @@ import com.example.clipbot_backend.selector.GoodClipSelector;
 import com.example.clipbot_backend.selector.ScoredWindow;
 import com.example.clipbot_backend.selector.SelectorConfig;
 import com.example.clipbot_backend.selector.Window;
-import com.example.clipbot_backend.service.EntitlementService;
-import com.example.clipbot_backend.service.JobService;
-import com.example.clipbot_backend.service.RenderProfileResolver;
-import com.example.clipbot_backend.service.RecommendationService;
+import com.example.clipbot_backend.service.*;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
@@ -78,6 +72,7 @@ public class RecommendationServiceImpl implements RecommendationService {
     private final SubtitleService subtitleService;
     private final JobService jobService;
     private final EntitlementService entitlementService;
+    private final AccountService accountService;
     private final RenderProfileResolver renderProfileResolver;
     private final GoodClipSelector goodClipSelector;
     private final ObjectMapper objectMapper;
@@ -93,7 +88,8 @@ public class RecommendationServiceImpl implements RecommendationService {
                                      ObjectMapper objectMapper,
                                      TransactionTemplate txTemplate,
                                      EntitlementService entitlementService,
-                                     RenderProfileResolver renderProfileResolver) {
+                                     RenderProfileResolver renderProfileResolver,
+                                     AccountService accountService) {
         this.mediaRepo = mediaRepo;
         this.clipRepo = clipRepo;
         this.segmentRepo = segmentRepo;
@@ -105,6 +101,7 @@ public class RecommendationServiceImpl implements RecommendationService {
         this.txTemplate = txTemplate;
         this.entitlementService = entitlementService;
         this.renderProfileResolver = renderProfileResolver;
+        this.accountService = accountService;
     }
 
     /**
@@ -210,21 +207,25 @@ public class RecommendationServiceImpl implements RecommendationService {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
-    private void enqueueRender(UUID clipId, Media media, String profile) {
-        Map<String, Object> payload = new HashMap<>();
-        RenderSpec requested = new RenderSpec(RenderSpec.DEFAULT.width(), RenderSpec.DEFAULT.height(), RenderSpec.DEFAULT.fps(), RenderSpec.DEFAULT.crf(), RenderSpec.DEFAULT.preset(), profile, Boolean.FALSE, null);
-        var policy = entitlementService.checkCanRender(media.getOwner(), requested);
-        if (!policy.allow()) {
-            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, policy.reason());
+    private void enqueueRender(UUID clipId, UUID mediaId, String requestedProfile) {
+        Media media = mediaRepo.findById(mediaId).orElseThrow();
+        Account owner = media.getOwner();
+
+        var decision = entitlementService.checkCanRender(owner, requestedProfile);
+        if (!decision.allow()) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "RENDER_BLOCKED:" + decision.reason());
         }
-        RenderSpec resolved = renderProfileResolver.resolve(requested, policy);
+
+        Map<String, Object> payload = new HashMap<>();
         payload.put("clipId", clipId.toString());
-        payload.put("profile", resolved.profile());
-        payload.put("watermarkEnabled", resolved.watermarkEnabled());
-        payload.put("watermarkPath", resolved.watermarkPath());
-        jobService.enqueueUnique(media.getId(), JobType.CLIP, "clip:" + clipId, payload);
-        entitlementService.burnOneRender(media.getOwner());
-        LOGGER.info("RecommendationService enqueue render clip={} profile={} watermark={}", clipId, resolved.profile(), resolved.watermarkEnabled());
+        payload.put("profile", decision.forcedProfile());
+        payload.put("watermarkEnabled", decision.watermark());
+
+        jobService.enqueueUnique(mediaId, JobType.CLIP, "clip:" + clipId, payload);
+
+        entitlementService.burnOneRender(owner);
+        LOGGER.info("RecommendationService enqueue clip={} profile={} watermark={}",
+                clipId, decision.forcedProfile(), decision.watermark());
     }
 
     private UpsertOutcome upsertClip(UUID mediaId, String profileHash, double score, Window window, Map<String, Object> profile) {

@@ -9,6 +9,7 @@ import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.ClipService;
 import com.example.clipbot_backend.service.JobService;
 import com.example.clipbot_backend.util.ClipStatus;
@@ -29,13 +30,15 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/v1/clips")
 public class ClipController {
+    private final AccountService accountService;
     private final ClipService clipService;
     private final JobService jobService;
     private final AssetRepository assetRepo;
     private final MediaRepository mediaRepo;
 
 
-    public ClipController(ClipService clipService, JobService jobService, AssetRepository assetRepo, MediaRepository mediaRepo) {
+    public ClipController(AccountService accountService, ClipService clipService, JobService jobService, AssetRepository assetRepo, MediaRepository mediaRepo) {
+        this.accountService = accountService;
         this.clipService = clipService;
         this.jobService = jobService;
         this.assetRepo = assetRepo;
@@ -117,15 +120,21 @@ public class ClipController {
         clipService.setStatus(id, status);
     }
     private void ensureOwnedBy(Clip clip, String sub) {
+        if (isAdmin(sub)) return; // admin bypass
         var owner = clip.getMedia().getOwner().getExternalSubject();
         if (!Objects.equals(owner, sub))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "CLIP_NOT_OWNED");
     }
 
     private void ensureOwnedBy(Media media, String sub) {
+        if (isAdmin(sub)) return; // admin bypass
         var owner = media.getOwner().getExternalSubject();
         if (!Objects.equals(owner, sub))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
+    }
+
+    private boolean isAdmin(String sub) {
+        try { return accountService.isAdmin(sub); } catch (Exception e) { return false; }
     }
 
 }

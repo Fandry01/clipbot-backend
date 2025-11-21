@@ -16,6 +16,8 @@ import java.util.UUID;
 public interface UsageCountersRepository extends JpaRepository<UsageCounters, UUID> {
     Optional<UsageCounters> findByAccountAndDateKey(Account account, LocalDate dateKey);
 
-    @Query("select coalesce(sum(u.rendersMonth),0) from UsageCounters u where u.account=:account and u.monthKey=:month")
-    int sumRendersMonth(@Param("account") Account account, @Param("month") LocalDate monthKey);
+    @Query("select coalesce(sum(u.rendersMonth), 0) " +
+                  "from UsageCounters u " +
+                  "where u.account = :account and u.monthKey = :monthKey")
+    int sumRendersMonth(@Param("account") Account account, @Param("monthKey") LocalDate monthKey);
 }

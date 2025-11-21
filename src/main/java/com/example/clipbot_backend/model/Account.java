@@ -29,7 +29,7 @@ Account {
     private String email;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "plan_tier", nullable = false, length = 16)
+    @Column(name = "plan_tier", nullable = false, columnDefinition = "text")
     private PlanTier planTier = PlanTier.TRIAL;
 
     @Column(name = "trial_ends_at")
@@ -42,6 +42,10 @@ Account {
     @CreationTimestamp
     private Instant createdAt;
 
+    @Column(name = "is_admin", nullable = false)
+    private boolean admin = false;
+
+    public boolean isAdmin() { return admin; }
     public Account() {
     }
 

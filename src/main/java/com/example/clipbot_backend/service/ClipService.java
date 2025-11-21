@@ -3,17 +3,15 @@ package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.model.Clip;
-import com.example.clipbot_backend.model.Job;
+
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
-import com.example.clipbot_backend.service.EntitlementService;
-import com.example.clipbot_backend.service.EntitlementService.RenderPolicy;
-import com.example.clipbot_backend.service.RenderProfileResolver;
+
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobStatus;
+
 import com.example.clipbot_backend.util.JobType;
 
 
@@ -25,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -104,34 +101,59 @@ public class ClipService {
         var clip = get(clipId);
         Media media = clip.getMedia();
         var owner = media.getOwner();
-        RenderPolicy policy = entitlementService.checkCanRender(owner, RenderSpec.DEFAULT);
-        if (!policy.allow()) {
-            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, policy.reason());
+
+        // 1) Vraag entitlement op met de gewenste profielnaam (uit DEFAULT)
+        String requestedProfile = RenderSpec.DEFAULT.profile();
+        EntitlementService.Decision dec = entitlementService.checkCanRender(owner, requestedProfile);
+
+        if (!dec.allow()) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, dec.reason());
         }
-        RenderSpec resolvedSpec = renderProfileResolver.resolve(RenderSpec.DEFAULT, policy);
+
+        // 2) Bouw de uiteindelijke RenderSpec op basis van DEFAULT + beslissing
+        //    - profiel komt uit entitlement (kan bv. geforceerd 'youtube-720p' zijn)
+        //    - watermarkEnabled komt uit entitlement
+        RenderSpec base = RenderSpec.DEFAULT;
+        RenderSpec resolvedSpec = new RenderSpec(
+                base.width(),
+                base.height(),
+                base.fps(),
+                base.crf(),
+                base.preset(),
+                (dec.forcedProfile() == null || dec.forcedProfile().isBlank()) ? base.profile() : dec.forcedProfile(),
+                dec.watermark(),
+                base.watermarkPath()
+        );
+
         String dedup = "clip:" + clipId;
 
-        // status naar QUEUED als hij nog niet in de renderflow zit
+        // 3) Status naar QUEUED als nog niet in flow
         if (clip.getStatus() != ClipStatus.QUEUED && clip.getStatus() != ClipStatus.RENDERING) {
             clip.setStatus(ClipStatus.QUEUED);
             clipRepo.saveAndFlush(clip);
         }
 
+        // 4) Payload voor job
         Map<String,Object> payload = Map.of(
                 "clipId", clipId.toString(),
                 "profile", resolvedSpec.profile(),
                 "watermarkEnabled", resolvedSpec.watermarkEnabled(),
                 "watermarkPath", resolvedSpec.watermarkPath()
         );
-        // mediaId is handig voor correlatie, neem die mee
+
         UUID mediaId = media != null ? media.getId() : null;
 
+        // 5) Queue + quota burn
         UUID jobId = jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
         entitlementService.burnOneRender(owner);
-        org.slf4j.LoggerFactory.getLogger(ClipService.class)
-                .info("Render enqueued account={} plan={} profile={} watermark={}", owner.getId(), owner.getPlanTier(), resolvedSpec.profile(), resolvedSpec.watermarkEnabled());
+
+        org.slf4j.LoggerFactory.getLogger(ClipService.class).info(
+                "Render enqueued account={} plan={} profile={} watermark={}",
+                owner.getId(), owner.getPlanTier(), resolvedSpec.profile(), resolvedSpec.watermarkEnabled()
+        );
         return jobId;
     }
+
 
 
 
