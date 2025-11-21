@@ -103,6 +103,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             spec = applyProfile(spec);
         }
         Map<String, Object> meta = options != null ? options.meta() : null;
+        boolean watermarkEnabled = spec != null && Boolean.TRUE.equals(spec.watermarkEnabled());
+        Path watermarkFile = spec != null && spec.watermarkPath() != null ? Path.of(spec.watermarkPath()) : null;
+        boolean watermarkExists = watermarkEnabled && watermarkFile != null && Files.exists(watermarkFile);
 
         Integer width  = firstNonNull(asInt(getOrNull(spec, "width")),  asInt(meta, "width"));
         Integer height = firstNonNull(asInt(getOrNull(spec, "height")), asInt(meta, "height"));
@@ -140,6 +143,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             // ========== VIDEO BRON ==========
             cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
             cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());
+            if (watermarkExists) { cmd.add("-i"); cmd.add(watermarkFile.toAbsolutePath().toString()); }
 
             // 1) scale/pad naar target
             if (width != null && height != null) {
@@ -160,7 +164,21 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
                 }
             }
-            if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+            if (watermarkExists) {
+                String filterGraph;
+                if (vf != null) {
+                    filterGraph = "[0:v]" + vf + "[v0];[v0][1:v]overlay=W-w-48:H-h-32[vout]";
+                } else {
+                    filterGraph = "[0:v][1:v]overlay=W-w-48:H-h-32[vout]";
+                }
+                cmd.add("-filter_complex");
+                cmd.add(filterGraph);
+                cmd.add("-map"); cmd.add("[vout]");
+                cmd.add("-map"); cmd.add("0:a:0?");
+                LOGGER.info("FfmpegClipRenderEngine filtergraph watermark video={}", filterGraph);
+            } else {
+                if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+            }
 
             // encoders
             cmd.add("-c:v"); cmd.add("libx264");
@@ -177,6 +195,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
             cmd.add("-ss"); cmd.add(String.format("%.3f", startMs / 1000.0));
             cmd.add("-i");  cmd.add(inputFile.toAbsolutePath().toString());                     // input #1 = audio
+            if (watermarkExists) { cmd.add("-i"); cmd.add(watermarkFile.toAbsolutePath().toString()); }
 
             // 1) scale/pad (veilig, canvas is al juist maar uniform houden)
             vf = appendFilter(vf, "scale=" + W + ":" + H + ":force_original_aspect_ratio=decrease");
@@ -195,11 +214,25 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
                 }
             }
-            if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+            if (watermarkExists) {
+                String filterGraph;
+                if (vf != null) {
+                    filterGraph = "[0:v]" + vf + "[v0];[v0][2:v]overlay=W-w-48:H-h-32[vout]";
+                } else {
+                    filterGraph = "[0:v][2:v]overlay=W-w-48:H-h-32[vout]";
+                }
+                cmd.add("-filter_complex");
+                cmd.add(filterGraph);
+                cmd.add("-map"); cmd.add("[vout]");
+                cmd.add("-map"); cmd.add("1:a:0?");
+                LOGGER.info("FfmpegClipRenderEngine filtergraph watermark audio={}", filterGraph);
+            } else {
+                if (vf != null) { cmd.add("-vf"); cmd.add(vf); }
+                cmd.add("-map"); cmd.add("0:v:0");  // video: canvas
+                cmd.add("-map"); cmd.add("1:a:0?"); // audio: bron (optioneel)
+            }
 
             // mapping + encoders
-            cmd.add("-map"); cmd.add("0:v:0");  // video: canvas
-            cmd.add("-map"); cmd.add("1:a:0?"); // audio: bron (optioneel)
             cmd.add("-c:v"); cmd.add("libx264");
             cmd.add("-preset"); cmd.add(targetPreset);
             cmd.add("-crf"); cmd.add(String.valueOf(targetCrf));
@@ -308,9 +341,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
 
     private RenderSpec applyProfile(RenderSpec spec) {
         RenderSpec defaults = switch (spec.profile()) {
-            case "tiktok-9x16" -> new RenderSpec(1080, 1920, 30, 23, "veryfast", "tiktok-9x16");
-            case "youtube-1080p" -> new RenderSpec(1920, 1080, 30, 23, "fast", "youtube-1080p");
-            case "youtube-720p" -> new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p");
+            case "tiktok-9x16" -> new RenderSpec(1080, 1920, 30, 23, "veryfast", "tiktok-9x16", spec.watermarkEnabled(), spec.watermarkPath());
+            case "youtube-1080p" -> new RenderSpec(1920, 1080, 30, 23, "fast", "youtube-1080p", spec.watermarkEnabled(), spec.watermarkPath());
+            case "youtube-720p" -> new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p", spec.watermarkEnabled(), spec.watermarkPath());
             default -> null;
         };
         if (defaults == null) return spec;
@@ -320,7 +353,9 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
                 spec.fps()    != null ? spec.fps()    : defaults.fps(),
                 spec.crf()    != null ? spec.crf()    : defaults.crf(),
                 spec.preset() != null ? spec.preset() : defaults.preset(),
-                spec.profile()
+                spec.profile(),
+                spec.watermarkEnabled(),
+                spec.watermarkPath()
         );
     }
     private static <T> T firstNonNull(T a, T b) { return a != null ? a : b; }

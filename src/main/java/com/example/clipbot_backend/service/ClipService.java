@@ -1,14 +1,17 @@
 package com.example.clipbot_backend.service;
 
 
+import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.model.Clip;
-import com.example.clipbot_backend.model.Job;
+
+import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
+
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobStatus;
+
 import com.example.clipbot_backend.util.JobType;
 
 
@@ -19,8 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -29,12 +33,16 @@ public class ClipService {
     private final MediaRepository mediaRepo;
     private final SegmentRepository segmentRepo;
     private final JobRepository jobRepo;
+    private final EntitlementService entitlementService;
+    private final RenderProfileResolver renderProfileResolver;
 
-    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo) {
+    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo, EntitlementService entitlementService, RenderProfileResolver renderProfileResolver) {
         this.clipRepo = clipRepo;
         this.mediaRepo = mediaRepo;
         this.segmentRepo = segmentRepo;
         this.jobRepo = jobRepo;
+        this.entitlementService = entitlementService;
+        this.renderProfileResolver = renderProfileResolver;
     }
 
     @Transactional
@@ -92,21 +100,77 @@ public class ClipService {
     }
     @Transactional
     public UUID enqueueRender(JobService jobs, UUID clipId) {
+        Objects.requireNonNull(jobs, "jobService");
+        Objects.requireNonNull(clipId, "clipId");
+        Objects.requireNonNull(entitlementService, "entitlementService");
+        Objects.requireNonNull(renderProfileResolver, "renderProfileResolver");
+
         var clip = get(clipId);
+        Media media = clip.getMedia();
+        var owner = media.getOwner();
+
+        // 1) Vraag entitlement op met de gewenste profielnaam (uit DEFAULT)
+        String requestedProfile = RenderSpec.DEFAULT.profile();
+        EntitlementService.Decision dec = entitlementService.checkCanRender(owner, requestedProfile);
+
+        if (!dec.allow()) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, dec.reason());
+        }
+
+        // 2) Bouw de uiteindelijke RenderSpec op basis van DEFAULT + beslissing
+        //    - profiel komt uit entitlement (kan bv. geforceerd 'youtube-720p' zijn)
+        //    - watermarkEnabled komt uit entitlement
+        RenderSpec base = RenderSpec.DEFAULT;
+        RenderSpec resolvedSpec = new RenderSpec(
+                base.width(),
+                base.height(),
+                base.fps(),
+                base.crf(),
+                base.preset(),
+                (dec.forcedProfile() == null || dec.forcedProfile().isBlank()) ? base.profile() : dec.forcedProfile(),
+                dec.watermark(),
+                base.watermarkPath()
+        );
+
         String dedup = "clip:" + clipId;
 
-        // status naar QUEUED als hij nog niet in de renderflow zit
+        // 3) Status naar QUEUED als nog niet in flow
         if (clip.getStatus() != ClipStatus.QUEUED && clip.getStatus() != ClipStatus.RENDERING) {
             clip.setStatus(ClipStatus.QUEUED);
             clipRepo.saveAndFlush(clip);
         }
 
-        Map<String,Object> payload = Map.of("clipId", clipId.toString());
-        // mediaId is handig voor correlatie, neem die mee
-        UUID mediaId = clip.getMedia() != null ? clip.getMedia().getId() : null;
+        // 4) Payload voor job
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("clipId", clipId.toString());
 
-        return jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
+        // profile: fallback naar 720p als hij null/blank is
+        String profile = resolvedSpec.profile();
+        if (profile == null || profile.isBlank()) profile = "youtube-720p";
+        payload.put("profile", profile);
+
+        // watermarkEnabled: forceer altijd boolean, geen null
+        boolean wmEnabled = Boolean.TRUE.equals(resolvedSpec.watermarkEnabled());
+        payload.put("watermarkEnabled", wmEnabled);
+
+        // Alleen watermarkPath meesturen als enabled én path != null
+        if (wmEnabled && resolvedSpec.watermarkPath() != null) {
+            payload.put("watermarkPath", resolvedSpec.watermarkPath());
+        }
+
+        UUID mediaId = media != null ? media.getId() : null;
+
+        // 5) Queue + quota burn
+        UUID jobId = jobs.enqueueUnique(mediaId, JobType.CLIP, dedup, payload);
+        entitlementService.burnOneRender(owner);
+
+        org.slf4j.LoggerFactory.getLogger(ClipService.class).info(
+                "Render enqueued account={} plan={} profile={} watermark={}",
+                owner.getId(), owner.getPlanTier(), resolvedSpec.profile(), resolvedSpec.watermarkEnabled()
+        );
+        return jobId;
     }
+
 
 
 

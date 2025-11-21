@@ -6,6 +6,7 @@ import com.example.clipbot_backend.dto.RecommendationResult;
 import com.example.clipbot_backend.dto.web.ComputeRequest;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.RecommendationService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -34,11 +35,13 @@ public class RecommendationController {
 
     private final RecommendationService recommendationService;
     private final MediaRepository mediaRepository;
+    private final AccountService accountService;
 
     public RecommendationController(RecommendationService recommendationService,
-                                    MediaRepository mediaRepository) {
+                                    MediaRepository mediaRepository, AccountService accountService) {
         this.recommendationService = recommendationService;
         this.mediaRepository = mediaRepository;
+        this.accountService = accountService;
     }
 
     /**
@@ -105,8 +108,16 @@ public class RecommendationController {
     }
 
     private Media ensureOwned(UUID mediaId, String ownerExternalSubject) {
+        if (isAdmin(ownerExternalSubject)) {
+            return mediaRepository.findById(mediaId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+        }
         return mediaRepository.findOwned(mediaId, ownerExternalSubject)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED_OR_NOT_FOUND"));
+    }
+
+    private boolean isAdmin(String sub) {
+        try { return accountService.isAdmin(sub); } catch (Exception e) { return false; }
     }
 
     private static final Set<String> ALLOWED_SORT = Set.of("score", "createdAt", "startMs", "endMs");

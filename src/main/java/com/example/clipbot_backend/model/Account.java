@@ -8,6 +8,8 @@ import java.time.Instant;
 
 import java.util.UUID;
 
+import com.example.clipbot_backend.model.PlanTier;
+
 @Entity
 public class
 Account {
@@ -26,6 +28,13 @@ Account {
     @Column(name = "email", length = 320)
     private String email;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "plan_tier", nullable = false, columnDefinition = "text")
+    private PlanTier planTier = PlanTier.TRIAL;
+
+    @Column(name = "trial_ends_at")
+    private Instant trialEndsAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private long version;
@@ -33,6 +42,10 @@ Account {
     @CreationTimestamp
     private Instant createdAt;
 
+    @Column(name = "is_admin", nullable = false)
+    private boolean admin = false;
+
+    public boolean isAdmin() { return admin; }
     public Account() {
     }
 
@@ -75,5 +88,21 @@ Account {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public PlanTier getPlanTier() {
+        return planTier;
+    }
+
+    public void setPlanTier(PlanTier planTier) {
+        this.planTier = planTier;
+    }
+
+    public Instant getTrialEndsAt() {
+        return trialEndsAt;
+    }
+
+    public void setTrialEndsAt(Instant trialEndsAt) {
+        this.trialEndsAt = trialEndsAt;
     }
 }

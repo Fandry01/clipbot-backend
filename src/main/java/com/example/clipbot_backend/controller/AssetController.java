@@ -7,6 +7,7 @@ import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.util.AssetKind;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,11 +27,13 @@ public class AssetController {
     private final AssetRepository assetRepo;
     private final MediaRepository mediaRepo;
     private final ClipRepository clipRepo;
+    private final AccountService accountService;
 
-    public AssetController(AssetRepository assetRepo, MediaRepository mediaRepo, ClipRepository clipRepo) {
+    public AssetController(AssetRepository assetRepo, MediaRepository mediaRepo, ClipRepository clipRepo, AccountService accountService) {
         this.assetRepo = assetRepo;
         this.mediaRepo = mediaRepo;
         this.clipRepo = clipRepo;
+        this.accountService = accountService;
     }
 
     @GetMapping("/by-media/{mediaId}")
@@ -99,10 +102,14 @@ public class AssetController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
     private void ensureOwnedBy(Media media, String sub) {
+        if (isAdmin(sub)) return; // admin bypass
         var ownerSub = media.getOwner().getExternalSubject();
         if (!Objects.equals(ownerSub, sub)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
         }
+    }
+    private boolean isAdmin(String sub) {
+        try { return accountService.isAdmin(sub); } catch (Exception e) { return false; }
     }
     private void ensureOwnedBy(Clip clip, String sub) { ensureOwnedBy(clip.getMedia(), sub); }
 }

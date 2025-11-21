@@ -232,7 +232,12 @@ void handleTranscribe(Job job) {
                 subs = subtitles.buildSubtitles(tr, clip.getStartMs(), clip.getEndMs());
             }
 
-            RenderOptions options = RenderOptions.withDefaults(clip.getMeta(), subs);
+            Map<String, Object> payload = job.getPayload();
+            String requestedProfile = payload.get("profile") != null ? String.valueOf(payload.get("profile")) : RenderSpec.DEFAULT.profile();
+            Boolean watermarkEnabled = payload.get("watermarkEnabled") == null ? RenderSpec.DEFAULT.watermarkEnabled() : Boolean.valueOf(String.valueOf(payload.get("watermarkEnabled")));
+            String watermarkPath = payload.get("watermarkPath") != null ? String.valueOf(payload.get("watermarkPath")) : null;
+            RenderSpec spec = new RenderSpec(RenderSpec.DEFAULT.width(), RenderSpec.DEFAULT.height(), RenderSpec.DEFAULT.fps(), RenderSpec.DEFAULT.crf(), RenderSpec.DEFAULT.preset(), requestedProfile, watermarkEnabled, watermarkPath);
+            RenderOptions options = new RenderOptions(spec, clip.getMeta(), subs);
             var res = renderEngine.render(srcPath, clip.getStartMs(), clip.getEndMs(), options);
 
             // Registreer Assets

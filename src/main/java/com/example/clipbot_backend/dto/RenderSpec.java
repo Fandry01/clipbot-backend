@@ -8,7 +8,9 @@ public record RenderSpec(@Min(144) @Max(7680) Integer width,
                          @Min(1) @Max(60)Integer fps,
                          @Min(1) @Max(51)Integer crf,
                          String preset,
-                         String profile) {
+                         String profile,
+                         Boolean watermarkEnabled,
+                         String watermarkPath) {
     public static final RenderSpec DEFAULT =
-            new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p");
+            new RenderSpec(1280, 720, 30, 23, "fast", "youtube-720p", Boolean.FALSE, null);
 }

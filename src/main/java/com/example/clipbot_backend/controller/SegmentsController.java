@@ -4,6 +4,8 @@ import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.dto.web.SaveBatchRequest;
 import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.service.AccountService;
+import com.example.clipbot_backend.service.RecommendationService;
 import com.example.clipbot_backend.service.SegmentService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -21,11 +23,12 @@ import java.util.*;
 @RequestMapping("/v1/segments")
 @Validated
 public class SegmentsController {
-
+    private final AccountService accountService;
     private final SegmentService segmentService;
     private final MediaRepository mediaRepo;
 
-    public SegmentsController(SegmentService segmentService, MediaRepository mediaRepo) {
+    public SegmentsController(AccountService accountService, SegmentService segmentService, MediaRepository mediaRepo) {
+        this.accountService = accountService;
         this.segmentService = segmentService;
         this.mediaRepo = mediaRepo;
     }
@@ -89,9 +92,14 @@ public class SegmentsController {
     private void ensureOwnedBy(UUID mediaId, String subject) {
         var media = mediaRepo.findById(mediaId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+        if (isAdmin(subject)) return; // admin bypass
         var ownerSub = media.getOwner().getExternalSubject();
         if (!Objects.equals(ownerSub, subject)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
         }
+    }
+
+    private boolean isAdmin(String sub) {
+        try { return accountService.isAdmin(sub); } catch (Exception e) { return false; }
     }
 }

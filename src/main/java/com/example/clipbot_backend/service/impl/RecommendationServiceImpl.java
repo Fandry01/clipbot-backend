@@ -4,10 +4,7 @@ import com.example.clipbot_backend.dto.ClipSummary;
 import com.example.clipbot_backend.dto.RecommendationResult;
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.dto.WordsParser;
-import com.example.clipbot_backend.model.Clip;
-import com.example.clipbot_backend.model.Media;
-import com.example.clipbot_backend.model.Segment;
-import com.example.clipbot_backend.model.Transcript;
+import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
@@ -16,11 +13,9 @@ import com.example.clipbot_backend.selector.GoodClipSelector;
 import com.example.clipbot_backend.selector.ScoredWindow;
 import com.example.clipbot_backend.selector.SelectorConfig;
 import com.example.clipbot_backend.selector.Window;
-import com.example.clipbot_backend.service.JobService;
-import com.example.clipbot_backend.service.RecommendationService;
+import com.example.clipbot_backend.service.*;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Nullable;
 import org.slf4j.Logger;
@@ -31,6 +26,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -40,7 +36,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -64,9 +59,9 @@ public class RecommendationServiceImpl implements RecommendationService {
     private static final long MAX_WINDOW_MS = 35_000L;
     private static final double DEFAULT_CONFIDENCE = 0.85;
     private static final double MAX_WORDS_PER_SECOND = 4.5;
-    private static final String DEFAULT_RENDER_PROFILE = "youtube-720p";
 
     private final MediaRepository mediaRepo;
+    private final ClipService clipService;
     private final ClipRepository clipRepo;
     private final SegmentRepository segmentRepo;
     private final TranscriptRepository transcriptRepo;
@@ -76,7 +71,7 @@ public class RecommendationServiceImpl implements RecommendationService {
     private final ObjectMapper objectMapper;
     private final TransactionTemplate txTemplate;
 
-    public RecommendationServiceImpl(MediaRepository mediaRepo,
+    public RecommendationServiceImpl(MediaRepository mediaRepo, ClipService clipService,
                                      ClipRepository clipRepo,
                                      SegmentRepository segmentRepo,
                                      TranscriptRepository transcriptRepo,
@@ -86,6 +81,7 @@ public class RecommendationServiceImpl implements RecommendationService {
                                      ObjectMapper objectMapper,
                                      TransactionTemplate txTemplate) {
         this.mediaRepo = mediaRepo;
+        this.clipService = clipService;
         this.clipRepo = clipRepo;
         this.segmentRepo = segmentRepo;
         this.transcriptRepo = transcriptRepo;
@@ -105,6 +101,7 @@ public class RecommendationServiceImpl implements RecommendationService {
         int limit = Math.max(1, Math.min(12, topN > 0 ? topN : DEFAULT_TOP_N));
         Map<String, Object> effectiveProfile = profile == null ? Map.of() : profile;
         long started = System.nanoTime();
+        Media mediaEntity = mediaRepo.findById(mediaId).orElseThrow(() -> new IllegalArgumentException("MEDIA_NOT_FOUND"));
         RecommendationInput input = loadInput(mediaId);
         SelectorConfig baseCfg = SelectorConfig.defaults();
         Set<String> keywordPool = deriveKeywords(input.words(), effectiveProfile);
@@ -129,25 +126,38 @@ public class RecommendationServiceImpl implements RecommendationService {
         List<ClipSummary> summaries = new ArrayList<>();
         Transcript transcript = input.transcript();
         String profileHash = computeProfileHash(effectiveProfile);
-        String renderProfile = resolveRenderProfile(effectiveProfile);
+
 
         for (ScoredWindow scoredWindow : scored) {
             Window window = scoredWindow.window();
             UpsertOutcome outcome = upsertClip(mediaId, profileHash, scoredWindow.score(), window, effectiveProfile);
-            summaries.add(new ClipSummary(outcome.clipId(), window.startMs(), window.endMs(), outcome.score(), outcome.status().name(), profileHash));
+            summaries.add(new ClipSummary(
+                    outcome.clipId(), window.startMs(), window.endMs(),
+                    outcome.score(), outcome.status().name(), profileHash));
 
             if (enqueueRender && outcome.created()) {
-                SubtitleFiles subs = null;
+                // (optioneel) subtitles voorbereiden als je die graag vooraf opslaat
                 if (transcript != null) {
-                    subs = subtitleService.buildSubtitles(transcript, window.startMs(), window.endMs());
+                    SubtitleFiles subs = subtitleService.buildSubtitles(transcript, window.startMs(), window.endMs());
                     if (subs != null) {
                         LOGGER.info("RecommendationService subtitles built clip={} srtKey={} vttKey={}",
                                 outcome.clipId(), subs.srtKey(), subs.vttKey());
                     }
                 }
-                enqueueRender(outcome.clipId(), mediaId, renderProfile);
+
+                try {
+                    // ✅ Laat ClipService alles doen: entitlement, profile-forcing, watermark, usage-burn, enqueue
+                    clipService.enqueueRender(jobService, outcome.clipId());
+                    LOGGER.info("RecommendationService render enqueued clip={} (via ClipService)", outcome.clipId());
+                } catch (ResponseStatusException ex) {
+                    // bv. PAYMENT_REQUIRED / quota; log en ga door met andere clips
+                    LOGGER.warn("RecommendationService enqueue skipped clip={} reason={} status={}",
+                            outcome.clipId(), ex.getReason(), ex.getStatusCode());
+                } catch (Exception ex) {
+                    LOGGER.error("RecommendationService enqueue failed clip={}", outcome.clipId(), ex);
+                }
             } else if (enqueueRender) {
-                LOGGER.info("RecommendationService render skipped clip={} profile={} reason=existing", outcome.clipId(), renderProfile);
+                LOGGER.info("RecommendationService render skipped clip={} reason=existing", outcome.clipId());
             }
         }
 
@@ -198,13 +208,6 @@ public class RecommendationServiceImpl implements RecommendationService {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
-    private void enqueueRender(UUID clipId, UUID mediaId, String profile) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("clipId", clipId.toString());
-        payload.put("profile", profile);
-        jobService.enqueueUnique(mediaId, JobType.CLIP, "clip:" + clipId, payload);
-        LOGGER.info("RecommendationService enqueue render clip={} profile={}", clipId, profile);
-    }
 
     private UpsertOutcome upsertClip(UUID mediaId, String profileHash, double score, Window window, Map<String, Object> profile) {
         return txTemplate.execute(status -> {
@@ -490,15 +493,6 @@ public class RecommendationServiceImpl implements RecommendationService {
         return value;
     }
 
-    private static String resolveRenderProfile(Map<String, Object> profile) {
-        if (profile != null) {
-            Object profileValue = profile.get("profile");
-            if (profileValue instanceof String text && !text.isBlank()) {
-                return text;
-            }
-        }
-        return DEFAULT_RENDER_PROFILE;
-    }
 
     @Transactional(readOnly = true)
     protected RecommendationInput loadInput(UUID mediaId) {
