@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "app.brand")
 public class BrandProperties {
-    private String watermarkPath = "data/brand/watermark.png";
+    private String watermarkPath;
 
     public String getWatermarkPath() {
         return watermarkPath;

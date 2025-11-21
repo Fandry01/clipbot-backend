@@ -4,6 +4,7 @@ import com.example.clipbot_backend.config.BrandProperties;
 import com.example.clipbot_backend.dto.RenderSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -24,15 +25,19 @@ public class RenderProfileResolver {
      * Applies the provided render policy to the requested spec, forcing watermark and profile when applicable.
      *
      * @param requested initial request spec (nullable)
-     * @param policy render policy describing constraints
      * @return resolved spec with enforced watermark and profile
      */
-    public RenderSpec resolve(RenderSpec requested, EntitlementService.RenderPolicy policy) {
-        Objects.requireNonNull(policy, "policy");
-        RenderSpec base = requested != null ? requested : RenderSpec.DEFAULT;
-        String profile = policy.forcedProfile() != null ? policy.forcedProfile() : base.profile();
-        Boolean watermarkEnabled = policy.watermark();
+    public RenderSpec resolve(@Nullable RenderSpec requested, EntitlementService.Decision decision) {
+        Objects.requireNonNull(decision, "decision");
+        RenderSpec base = (requested != null) ? requested : RenderSpec.DEFAULT;
+
+        String profile = (decision.forcedProfile() == null || decision.forcedProfile().isBlank())
+                ? base.profile()
+                : decision.forcedProfile();
+
+        boolean watermarkEnabled = decision.watermark();
         String watermarkPath = watermarkEnabled ? brandProperties.getWatermarkPath() : null;
+
         RenderSpec resolved = new RenderSpec(
                 base.width(),
                 base.height(),
@@ -43,7 +48,9 @@ public class RenderProfileResolver {
                 watermarkEnabled,
                 watermarkPath
         );
-        LOGGER.debug("RenderProfileResolver resolved profile={} watermark={} path={}", profile, watermarkEnabled, watermarkPath);
+        LOGGER.debug("RenderProfileResolver resolved profile={} watermark={} path={}",
+                profile, watermarkEnabled, watermarkPath);
         return resolved;
     }
+
 }

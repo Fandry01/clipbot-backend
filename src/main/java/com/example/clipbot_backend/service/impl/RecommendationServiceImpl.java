@@ -2,7 +2,6 @@ package com.example.clipbot_backend.service.impl;
 
 import com.example.clipbot_backend.dto.ClipSummary;
 import com.example.clipbot_backend.dto.RecommendationResult;
-import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.dto.SubtitleFiles;
 import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.model.*;
@@ -17,12 +16,10 @@ import com.example.clipbot_backend.selector.Window;
 import com.example.clipbot_backend.service.*;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -39,7 +36,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -63,22 +59,19 @@ public class RecommendationServiceImpl implements RecommendationService {
     private static final long MAX_WINDOW_MS = 35_000L;
     private static final double DEFAULT_CONFIDENCE = 0.85;
     private static final double MAX_WORDS_PER_SECOND = 4.5;
-    private static final String DEFAULT_RENDER_PROFILE = "youtube-720p";
 
     private final MediaRepository mediaRepo;
+    private final ClipService clipService;
     private final ClipRepository clipRepo;
     private final SegmentRepository segmentRepo;
     private final TranscriptRepository transcriptRepo;
     private final SubtitleService subtitleService;
     private final JobService jobService;
-    private final EntitlementService entitlementService;
-    private final AccountService accountService;
-    private final RenderProfileResolver renderProfileResolver;
     private final GoodClipSelector goodClipSelector;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate txTemplate;
 
-    public RecommendationServiceImpl(MediaRepository mediaRepo,
+    public RecommendationServiceImpl(MediaRepository mediaRepo, ClipService clipService,
                                      ClipRepository clipRepo,
                                      SegmentRepository segmentRepo,
                                      TranscriptRepository transcriptRepo,
@@ -86,11 +79,9 @@ public class RecommendationServiceImpl implements RecommendationService {
                                      JobService jobService,
                                      GoodClipSelector goodClipSelector,
                                      ObjectMapper objectMapper,
-                                     TransactionTemplate txTemplate,
-                                     EntitlementService entitlementService,
-                                     RenderProfileResolver renderProfileResolver,
-                                     AccountService accountService) {
+                                     TransactionTemplate txTemplate) {
         this.mediaRepo = mediaRepo;
+        this.clipService = clipService;
         this.clipRepo = clipRepo;
         this.segmentRepo = segmentRepo;
         this.transcriptRepo = transcriptRepo;
@@ -99,9 +90,6 @@ public class RecommendationServiceImpl implements RecommendationService {
         this.goodClipSelector = goodClipSelector;
         this.objectMapper = objectMapper;
         this.txTemplate = txTemplate;
-        this.entitlementService = entitlementService;
-        this.renderProfileResolver = renderProfileResolver;
-        this.accountService = accountService;
     }
 
     /**
@@ -138,25 +126,38 @@ public class RecommendationServiceImpl implements RecommendationService {
         List<ClipSummary> summaries = new ArrayList<>();
         Transcript transcript = input.transcript();
         String profileHash = computeProfileHash(effectiveProfile);
-        String renderProfile = resolveRenderProfile(effectiveProfile);
+
 
         for (ScoredWindow scoredWindow : scored) {
             Window window = scoredWindow.window();
             UpsertOutcome outcome = upsertClip(mediaId, profileHash, scoredWindow.score(), window, effectiveProfile);
-            summaries.add(new ClipSummary(outcome.clipId(), window.startMs(), window.endMs(), outcome.score(), outcome.status().name(), profileHash));
+            summaries.add(new ClipSummary(
+                    outcome.clipId(), window.startMs(), window.endMs(),
+                    outcome.score(), outcome.status().name(), profileHash));
 
             if (enqueueRender && outcome.created()) {
-                SubtitleFiles subs = null;
+                // (optioneel) subtitles voorbereiden als je die graag vooraf opslaat
                 if (transcript != null) {
-                    subs = subtitleService.buildSubtitles(transcript, window.startMs(), window.endMs());
+                    SubtitleFiles subs = subtitleService.buildSubtitles(transcript, window.startMs(), window.endMs());
                     if (subs != null) {
                         LOGGER.info("RecommendationService subtitles built clip={} srtKey={} vttKey={}",
                                 outcome.clipId(), subs.srtKey(), subs.vttKey());
                     }
                 }
-                enqueueRender(outcome.clipId(), mediaEntity, renderProfile);
+
+                try {
+                    // ✅ Laat ClipService alles doen: entitlement, profile-forcing, watermark, usage-burn, enqueue
+                    clipService.enqueueRender(jobService, outcome.clipId());
+                    LOGGER.info("RecommendationService render enqueued clip={} (via ClipService)", outcome.clipId());
+                } catch (ResponseStatusException ex) {
+                    // bv. PAYMENT_REQUIRED / quota; log en ga door met andere clips
+                    LOGGER.warn("RecommendationService enqueue skipped clip={} reason={} status={}",
+                            outcome.clipId(), ex.getReason(), ex.getStatusCode());
+                } catch (Exception ex) {
+                    LOGGER.error("RecommendationService enqueue failed clip={}", outcome.clipId(), ex);
+                }
             } else if (enqueueRender) {
-                LOGGER.info("RecommendationService render skipped clip={} profile={} reason=existing", outcome.clipId(), renderProfile);
+                LOGGER.info("RecommendationService render skipped clip={} reason=existing", outcome.clipId());
             }
         }
 
@@ -207,26 +208,6 @@ public class RecommendationServiceImpl implements RecommendationService {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
-    private void enqueueRender(UUID clipId, UUID mediaId, String requestedProfile) {
-        Media media = mediaRepo.findById(mediaId).orElseThrow();
-        Account owner = media.getOwner();
-
-        var decision = entitlementService.checkCanRender(owner, requestedProfile);
-        if (!decision.allow()) {
-            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "RENDER_BLOCKED:" + decision.reason());
-        }
-
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("clipId", clipId.toString());
-        payload.put("profile", decision.forcedProfile());
-        payload.put("watermarkEnabled", decision.watermark());
-
-        jobService.enqueueUnique(mediaId, JobType.CLIP, "clip:" + clipId, payload);
-
-        entitlementService.burnOneRender(owner);
-        LOGGER.info("RecommendationService enqueue clip={} profile={} watermark={}",
-                clipId, decision.forcedProfile(), decision.watermark());
-    }
 
     private UpsertOutcome upsertClip(UUID mediaId, String profileHash, double score, Window window, Map<String, Object> profile) {
         return txTemplate.execute(status -> {
@@ -512,15 +493,6 @@ public class RecommendationServiceImpl implements RecommendationService {
         return value;
     }
 
-    private static String resolveRenderProfile(Map<String, Object> profile) {
-        if (profile != null) {
-            Object profileValue = profile.get("profile");
-            if (profileValue instanceof String text && !text.isBlank()) {
-                return text;
-            }
-        }
-        return DEFAULT_RENDER_PROFILE;
-    }
 
     @Transactional(readOnly = true)
     protected RecommendationInput loadInput(UUID mediaId) {

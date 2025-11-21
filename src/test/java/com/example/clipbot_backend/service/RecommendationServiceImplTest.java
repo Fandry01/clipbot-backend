@@ -86,12 +86,12 @@ class RecommendationServiceImplTest {
     private RecommendationServiceImpl service;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @BeforeEach
-    void setUp() {
-        TransactionTemplate template = new TransactionTemplate(new PseudoTransactionManager());
-        service = new RecommendationServiceImpl(mediaRepository, clipRepository, segmentRepository, transcriptRepository,
-                subtitleService, jobService, new HeuristicGoodClipSelector(), objectMapper, template);
-    }
+//    @BeforeEach
+//    void setUp() {
+//        TransactionTemplate template = new TransactionTemplate(new PseudoTransactionManager());
+//        service = new RecommendationServiceImpl(mediaRepository, clipRepository, segmentRepository, transcriptRepository,
+//                subtitleService, jobService, new HeuristicGoodClipSelector(), objectMapper, template);
+//    }
 
     @Test
     void computeRecommendationsIsIdempotentAndAvoidsDoubleEnqueue() throws Exception {

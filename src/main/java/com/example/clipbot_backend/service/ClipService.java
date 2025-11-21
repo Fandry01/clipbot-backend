@@ -22,7 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -98,6 +100,11 @@ public class ClipService {
     }
     @Transactional
     public UUID enqueueRender(JobService jobs, UUID clipId) {
+        Objects.requireNonNull(jobs, "jobService");
+        Objects.requireNonNull(clipId, "clipId");
+        Objects.requireNonNull(entitlementService, "entitlementService");
+        Objects.requireNonNull(renderProfileResolver, "renderProfileResolver");
+
         var clip = get(clipId);
         Media media = clip.getMedia();
         var owner = media.getOwner();
@@ -134,12 +141,22 @@ public class ClipService {
         }
 
         // 4) Payload voor job
-        Map<String,Object> payload = Map.of(
-                "clipId", clipId.toString(),
-                "profile", resolvedSpec.profile(),
-                "watermarkEnabled", resolvedSpec.watermarkEnabled(),
-                "watermarkPath", resolvedSpec.watermarkPath()
-        );
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("clipId", clipId.toString());
+
+        // profile: fallback naar 720p als hij null/blank is
+        String profile = resolvedSpec.profile();
+        if (profile == null || profile.isBlank()) profile = "youtube-720p";
+        payload.put("profile", profile);
+
+        // watermarkEnabled: forceer altijd boolean, geen null
+        boolean wmEnabled = Boolean.TRUE.equals(resolvedSpec.watermarkEnabled());
+        payload.put("watermarkEnabled", wmEnabled);
+
+        // Alleen watermarkPath meesturen als enabled én path != null
+        if (wmEnabled && resolvedSpec.watermarkPath() != null) {
+            payload.put("watermarkPath", resolvedSpec.watermarkPath());
+        }
 
         UUID mediaId = media != null ? media.getId() : null;
 
