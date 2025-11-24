@@ -141,23 +141,13 @@ public class ClipService {
         }
 
         // 4) Payload voor job
-        Map<String, Object> payload = new HashMap<>();
+        Map<String,Object> payload = new HashMap<>();
         payload.put("clipId", clipId.toString());
-
-        // profile: fallback naar 720p als hij null/blank is
-        String profile = resolvedSpec.profile();
-        if (profile == null || profile.isBlank()) profile = "youtube-720p";
-        payload.put("profile", profile);
-
-        // watermarkEnabled: forceer altijd boolean, geen null
-        boolean wmEnabled = Boolean.TRUE.equals(resolvedSpec.watermarkEnabled());
-        payload.put("watermarkEnabled", wmEnabled);
-
-        // Alleen watermarkPath meesturen als enabled én path != null
-        if (wmEnabled && resolvedSpec.watermarkPath() != null) {
+        payload.put("profile", resolvedSpec.profile());
+        payload.put("watermarkEnabled", resolvedSpec.watermarkEnabled());
+        if (Boolean.TRUE.equals(resolvedSpec.watermarkEnabled()) && resolvedSpec.watermarkPath() != null) {
             payload.put("watermarkPath", resolvedSpec.watermarkPath());
         }
-
         UUID mediaId = media != null ? media.getId() : null;
 
         // 5) Queue + quota burn

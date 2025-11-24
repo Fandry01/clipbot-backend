@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,4 +21,12 @@ public interface UsageCountersRepository extends JpaRepository<UsageCounters, UU
                   "from UsageCounters u " +
                   "where u.account = :account and u.monthKey = :monthKey")
     int sumRendersMonth(@Param("account") Account account, @Param("monthKey") LocalDate monthKey);
+    @Query("""
+    select u.monthKey as month, coalesce(sum(u.rendersToday), 0) as total
+    from UsageCounters u
+    where u.account = :account
+    group by u.monthKey
+    order by u.monthKey desc
+    """)
+    List<Object[]> monthlyRollup(Account account);
 }

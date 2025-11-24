@@ -52,7 +52,6 @@ public class UsageService {
         UsageCounters counters = usageCountersRepository.findByAccountAndDateKey(account, today)
                 .orElseGet(() -> new UsageCounters(account, today, monthKey));
         counters.setRendersToday(counters.getRendersToday() + 1);
-        counters.setRendersMonth(counters.getRendersMonth() + 1);
         usageCountersRepository.save(counters);
         LOGGER.info("UsageService increment account={} day={} month={}", account.getId(), counters.getRendersToday(), counters.getRendersMonth());
     }
