@@ -113,7 +113,11 @@ public class OneClickOrchestrator {
             LOGGER.info("OneClickOrchestrator DONE owner={} projectId={} mediaId={} idempotencyKey={}",
                     request.ownerExternalSubject(), projectResolution.project().getId(), mediaId, request.idempotencyKey());
             return response;
-        } catch (RuntimeException | ResponseStatusException ex) {
+        } catch (ResponseStatusException ex) {
+            orchestration.setStatus(OrchestrationStatus.FAILED);
+            orchestrationRepository.save(orchestration);
+            throw ex;
+        } catch (RuntimeException ex) {
             orchestration.setStatus(OrchestrationStatus.FAILED);
             orchestrationRepository.save(orchestration);
             throw ex;
