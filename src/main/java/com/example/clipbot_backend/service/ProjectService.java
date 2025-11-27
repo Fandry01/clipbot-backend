@@ -1,6 +1,7 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.ClipResponse;
+import com.example.clipbot_backend.dto.ProjectPatch;
 import com.example.clipbot_backend.dto.web.ProjectCreateRequest;
 import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Clip;
@@ -18,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -52,6 +54,12 @@ public class ProjectService {
         return projectRepository.save(project);
     }
 
+    @Transactional
+    public Project createProject(Account owner, String title, UUID templateId, String normalizedSourceUrl) {
+        var project = new Project(owner, title, templateId, normalizedSourceUrl);
+        return projectRepository.save(project);
+    }
+
     // Overload voor bestaande callers met UUID (eventueel tijdelijk aanhouden)
     @Transactional
     public Project createProject(UUID ownerId, String title, UUID templateId) {
@@ -70,6 +78,20 @@ public class ProjectService {
     public Project createProjectBySubject(String subject, String title, UUID templateId) {
         var owner = accountService.ensureByExternalSubject(subject, null);
         return createProject(owner, title, templateId);
+    }
+
+    @Transactional
+    public Project createProjectBySubject(String subject, String title, UUID templateId, String normalizedSourceUrl) {
+        var owner = accountService.ensureByExternalSubject(subject, null);
+        return createProject(owner, title, templateId, normalizedSourceUrl);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Project> findByNormalizedUrl(String ownerExternalSubject, String normalizedUrl) {
+        if (normalizedUrl == null || normalizedUrl.isBlank()) {
+            return Optional.empty();
+        }
+        return projectRepository.findByOwnerAndNormalizedUrl(ownerExternalSubject, normalizedUrl.trim());
     }
 
     /* ---------- READ ---------- */
@@ -93,6 +115,30 @@ public class ProjectService {
     public Project get(UUID projectId) {
         return projectRepository.findById(projectId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND"));
+    }
+
+    @Transactional
+    public void patch(UUID projectId, ProjectPatch patch) {
+        if (patch == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "PATCH_REQUIRED");
+        }
+        var project = get(projectId);
+        boolean mutated = false;
+        if (patch.title() != null && !patch.title().isBlank()) {
+            project.setTitle(patch.title().trim());
+            mutated = true;
+        }
+        if (patch.thumbnailUrl() != null && !patch.thumbnailUrl().isBlank()) {
+            project.setThumbnailUrl(patch.thumbnailUrl().trim());
+            mutated = true;
+        }
+        if (patch.normalizedSourceUrl() != null && !patch.normalizedSourceUrl().isBlank()) {
+            project.setNormalizedSourceUrl(patch.normalizedSourceUrl().trim());
+            mutated = true;
+        }
+        if (mutated) {
+            projectRepository.save(project);
+        }
     }
 
     /* ---------- MEDIA-LINK ---------- */

@@ -2,6 +2,7 @@ package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.model.Media;
 
+import com.example.clipbot_backend.dto.media.CreateFromUrlResponse;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
@@ -109,6 +110,11 @@ public class MediaService  {
 
         mediaRepo.save(media);
         return media.getId();
+    }
+
+    public CreateFromUrlResponse createFromUrl(UUID ownerId, String url, String source) {
+        UUID mediaId = createMediaFromUrl(ownerId, url, MediaPlatform.OTHER, source, null, null);
+        return new CreateFromUrlResponse(mediaId);
     }
 
     private String buildExternalObjectKey(String url, MediaPlatform platform) {

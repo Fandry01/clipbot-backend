@@ -24,6 +24,12 @@ public class Project {
     @Column(name = "title", nullable = false, length = 255)
     private String title;
 
+    @Column(name = "normalized_source_url", length = 2048)
+    private String normalizedSourceUrl;
+
+    @Column(name = "thumbnail_url", length = 2048)
+    private String thumbnailUrl;
+
     @Column(name = "template_id", nullable = true)
     private UUID templateId;
 
@@ -42,6 +48,11 @@ public class Project {
         this.owner = owner;
         this.title = title;
         this.templateId = templateId;
+    }
+
+    public Project(Account owner, String title, UUID templateId, String normalizedSourceUrl) {
+        this(owner, title, templateId);
+        this.normalizedSourceUrl = normalizedSourceUrl;
     }
 
     public UUID getId() {
@@ -70,6 +81,22 @@ public class Project {
 
     public void setTemplateId(UUID templateId) {
         this.templateId = templateId;
+    }
+
+    public String getNormalizedSourceUrl() {
+        return normalizedSourceUrl;
+    }
+
+    public void setNormalizedSourceUrl(String normalizedSourceUrl) {
+        this.normalizedSourceUrl = normalizedSourceUrl;
+    }
+
+    public String getThumbnailUrl() {
+        return thumbnailUrl;
+    }
+
+    public void setThumbnailUrl(String thumbnailUrl) {
+        this.thumbnailUrl = thumbnailUrl;
     }
 
     public Instant getCreatedAt() {
