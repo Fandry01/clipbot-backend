@@ -7,7 +7,6 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.CreationTimestamp;
@@ -41,8 +40,7 @@ public class OneClickOrchestration {
     @Column(name = "status", nullable = false, length = 32)
     private OrchestrationStatus status = OrchestrationStatus.IN_PROGRESS;
 
-    @Lob
-    @Column(name = "response_payload")
+    @Column(name = "response_payload", columnDefinition = "text")
     private String responsePayload;
 
     @CreationTimestamp
