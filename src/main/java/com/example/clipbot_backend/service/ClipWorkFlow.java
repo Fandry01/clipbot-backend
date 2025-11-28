@@ -66,7 +66,7 @@ public class ClipWorkFlow {
     }
 
 
-    public void persistSuccess(IoData ioData, RenderResult res, @Nullable SubtitleFiles subs) {
+    public void persistSuccess(IoData ioData, RenderResult res, @Nullable SubtitleFiles subs, @Nullable RenderResult clean) {
         txReqNew.execute(status -> {
             var clipRef = clipRepo.getReferenceById(ioData.clipId);
             var mediaRef = mediaRepo.getReferenceById(ioData.mediaId);
@@ -100,6 +100,13 @@ public class ClipWorkFlow {
                     vtt.setRelatedMedia(mediaRef);
                     assetRepo.save(vtt);
                 }
+            }
+
+            if (clean != null) {
+                Asset cleanMp4 = new Asset(ownerRef, AssetKind.CLIP_MP4_CLEAN, clean.mp4Key(), ensureSize(clean.mp4Key(), clean.mp4Size()));
+                cleanMp4.setRelatedClip(clipRef);
+                cleanMp4.setRelatedMedia(mediaRef);
+                assetRepo.save(cleanMp4);
             }
 
             // deprecate: clip.setCaptionSrtKey(...)
@@ -153,10 +160,16 @@ public class ClipWorkFlow {
 
         RenderOptions options = RenderOptions.withDefaults(Map.of(), subs);
         RenderResult res = renderEngine.render(srcPath, io.startMs(), io.endMs(), options);
+        RenderResult clean = null;
+        try {
+            clean = renderEngine.renderClean(srcPath, io.startMs(), io.endMs(), RenderOptions.withDefaults(Map.of(), null));
+        } catch (Exception e) {
+            LOGGER.warn("Clean render failed for clip {}: {}", clipId, e.toString());
+        }
         // validateOutputs(res, subs);
 
         try {
-            persistSuccess(io, res, subs); // TX B
+            persistSuccess(io, res, subs, clean); // TX B
         } catch (Exception e) {
             persistFailure(clipId, e);         // TX C
             throw e;
