@@ -43,6 +43,9 @@ public class OneClickOrchestration {
     @Column(name = "response_payload", columnDefinition = "text")
     private String responsePayload;
 
+    @Column(name = "request_fingerprint", length = 512)
+    private String requestFingerprint;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -94,6 +97,14 @@ public class OneClickOrchestration {
 
     public void setResponsePayload(String responsePayload) {
         this.responsePayload = responsePayload;
+    }
+
+    public String getRequestFingerprint() {
+        return requestFingerprint;
+    }
+
+    public void setRequestFingerprint(String requestFingerprint) {
+        this.requestFingerprint = requestFingerprint;
     }
 
     public Instant getCreatedAt() {

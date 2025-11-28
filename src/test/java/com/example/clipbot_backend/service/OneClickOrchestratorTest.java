@@ -207,4 +207,22 @@ class OneClickOrchestratorTest {
                 .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
     }
+
+    @Test
+    void orchestrateRejectsMismatchedRequestForSameIdempotencyKey() {
+        OneClickOrchestration existing = new OneClickOrchestration("demo", "idem-5");
+        existing.setStatus(OrchestrationStatus.SUCCEEDED);
+        existing.setRequestFingerprint("owner:demo|url:https://example.com/a|mediaId:|title:Title");
+
+        when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey("demo", "idem-5"))
+                .thenReturn(Optional.of(existing));
+
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com/b", null, "Title", null, "idem-5");
+
+        assertThatThrownBy(() -> orchestrator.orchestrate(request))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("IDEMPOTENCY_KEY_REUSED_DIFFERENT_REQUEST")
+                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
 }

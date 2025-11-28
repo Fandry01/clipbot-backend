@@ -80,12 +80,13 @@ public class OneClickOrchestrator {
     @Transactional
     public OneClickResponse orchestrate(OneClickRequest request) {
         validateRequest(request);
+        String requestFingerprint = fingerprint(request);
         LOGGER.info("OneClickOrchestrator START owner={} idempotencyKey={}", request.ownerExternalSubject(), request.idempotencyKey());
 
         OneClickOrchestration orchestration = orchestrationRepository
                 .findByOwnerExternalSubjectAndIdempotencyKey(request.ownerExternalSubject(), request.idempotencyKey())
-                .map(existing -> handleExistingOrchestration(existing, request))
-                .orElseGet(() -> createOrchestrationRecord(request));
+                .map(existing -> handleExistingOrchestration(existing, request, requestFingerprint))
+                .orElseGet(() -> createOrchestrationRecord(request, requestFingerprint));
 
         if (orchestration.getStatus() == OrchestrationStatus.SUCCEEDED && orchestration.getResponsePayload() != null) {
             return deserialize(orchestration.getResponsePayload());
@@ -239,18 +240,26 @@ public class OneClickOrchestrator {
         return ThumbnailSource.NONE;
     }
 
-    private OneClickOrchestration createOrchestrationRecord(OneClickRequest request) {
+    private OneClickOrchestration createOrchestrationRecord(OneClickRequest request, String requestFingerprint) {
         OneClickOrchestration orchestration = new OneClickOrchestration(request.ownerExternalSubject(), request.idempotencyKey());
+        orchestration.setRequestFingerprint(requestFingerprint);
         orchestrationRepository.save(orchestration);
         return orchestration;
     }
 
-    private OneClickOrchestration handleExistingOrchestration(OneClickOrchestration orchestration, OneClickRequest request) {
+    private OneClickOrchestration handleExistingOrchestration(OneClickOrchestration orchestration, OneClickRequest request, String requestFingerprint) {
         if (!request.ownerExternalSubject().equals(orchestration.getOwnerExternalSubject())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "IDEMPOTENCY_OWNER_MISMATCH");
         }
+        if (orchestration.getRequestFingerprint() != null && !orchestration.getRequestFingerprint().equals(requestFingerprint)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED_DIFFERENT_REQUEST");
+        }
         if (orchestration.getStatus() == OrchestrationStatus.IN_PROGRESS) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "ORCHESTRATION_IN_PROGRESS");
+        }
+        if (orchestration.getRequestFingerprint() == null) {
+            orchestration.setRequestFingerprint(requestFingerprint);
+            orchestrationRepository.save(orchestration);
         }
         return orchestration;
     }
@@ -286,6 +295,23 @@ public class OneClickOrchestrator {
         } catch (Exception ex) {
             throw new IllegalStateException("Failed to deserialize stored response", ex);
         }
+    }
+
+    private String fingerprint(OneClickRequest request) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("owner:").append(request.ownerExternalSubject() == null ? "" : request.ownerExternalSubject().trim());
+        builder.append("|url:").append(request.url() == null ? "" : request.url().trim());
+        builder.append("|mediaId:").append(request.mediaId() == null ? "" : request.mediaId());
+        builder.append("|title:").append(request.title() == null ? "" : request.title().trim());
+        OneClickRequest.Options opts = request.opts();
+        if (opts != null) {
+            builder.append("|lang:").append(opts.lang() == null ? "" : opts.lang());
+            builder.append("|provider:").append(opts.provider() == null ? "" : opts.provider());
+            builder.append("|scene:").append(opts.sceneThreshold() == null ? "" : opts.sceneThreshold());
+            builder.append("|topN:").append(opts.topN() == null ? "" : opts.topN());
+            builder.append("|enqueueRender:").append(opts.enqueueRender() == null ? "" : opts.enqueueRender());
+        }
+        return builder.toString();
     }
 
     private record ProjectResolution(Project project, boolean created) {
