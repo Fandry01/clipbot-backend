@@ -6,6 +6,7 @@ import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.DetectionService;
 import com.example.clipbot_backend.service.ProjectService;
+import com.example.clipbot_backend.service.MediaService;
 import com.example.clipbot_backend.service.RecommendationService;
 import com.example.clipbot_backend.repository.MediaRepository;
 import org.slf4j.Logger;
@@ -32,17 +33,20 @@ public class OrchestrateController {
     private final AccountService accountService;
     private final ProjectService projectService;
     private final MediaRepository mediaRepository;
+    private final MediaService mediaService;
     private final DetectionService detectionService;
     private final RecommendationService recommendationService;
 
     public OrchestrateController(AccountService accountService,
                                  ProjectService projectService,
                                  MediaRepository mediaRepository,
+                                 MediaService mediaService,
                                  DetectionService detectionService,
                                  RecommendationService recommendationService) {
         this.accountService = accountService;
         this.projectService = projectService;
         this.mediaRepository = mediaRepository;
+        this.mediaService = mediaService;
         this.detectionService = detectionService;
         this.recommendationService = recommendationService;
     }
@@ -52,7 +56,7 @@ public class OrchestrateController {
         validateRequest(request);
         var owner = accountService.getByExternalSubjectOrThrow(request.ownerExternalSubject());
 
-        Media media = resolveMedia(request);
+        Media media = resolveMedia(request, owner.getId());
         if (!Objects.equals(media.getOwner().getId(), owner.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "MEDIA_NOT_OWNED");
         }
@@ -94,12 +98,14 @@ public class OrchestrateController {
                 ));
     }
 
-    private Media resolveMedia(OneClickRequest request) {
+    private Media resolveMedia(OneClickRequest request, UUID ownerId) {
         if (request.mediaId() != null) {
             return mediaRepository.findById(request.mediaId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
         }
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL_INGEST_NOT_SUPPORTED");
+        UUID mediaId = mediaService.createMediaFromUrl(ownerId, request.url(), null, "url", null, null);
+        return mediaRepository.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
     }
 
     private ProjectResolution resolveProject(OneClickRequest request, Media media) {
