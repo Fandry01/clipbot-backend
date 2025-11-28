@@ -155,7 +155,7 @@ public class MediaService  {
         String s = (source == null ? "" : source.trim().toLowerCase());
         return switch (s) {
             case "upload" -> "upload";
-            case "url", "" -> "url";
+            case "url", "ingest", "" -> "url";
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_SOURCE");
         };
     }
