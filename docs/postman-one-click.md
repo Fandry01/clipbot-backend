@@ -45,3 +45,4 @@ Deze gids laat zien hoe je de idempotente one-click orchestrator met Postman kun
 ## Tips
 - Houd `ownerExternalSubject` consistent per testrun; idempotency wordt op owner + key afgedwongen.
 - Voor uploads gebruik je `mediaId` in plaats van `url`; de fingerprint-check werkt hetzelfde: gewijzigde payload met dezelfde key geeft 409.
+- Genereer de `idempotencyKey` in de client (bijv. `crypto.randomUUID()` in de frontend) en hergebruik die alleen voor retries met dezelfde payload; een nieuwe bron of upload hoort een nieuwe key te krijgen.
