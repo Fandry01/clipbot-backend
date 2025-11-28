@@ -6,5 +6,6 @@ package com.example.clipbot_backend.util;
 public enum ThumbnailSource {
     YOUTUBE,
     CLIP,
+    DEFERRED,
     NONE
 }

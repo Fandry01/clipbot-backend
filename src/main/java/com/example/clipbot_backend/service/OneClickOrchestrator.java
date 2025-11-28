@@ -15,6 +15,7 @@ import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
 import com.example.clipbot_backend.util.ThumbnailSource;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +49,7 @@ public class OneClickOrchestrator {
     private final SegmentRepository segmentRepository;
     private final TranscriptRepository transcriptRepository;
     private final OneClickOrchestrationRepository orchestrationRepository;
+    private final ThumbnailService thumbnailService;
     private final ObjectMapper objectMapper;
 
     public OneClickOrchestrator(MetadataService metadataService,
@@ -58,6 +61,7 @@ public class OneClickOrchestrator {
                                 SegmentRepository segmentRepository,
                                 TranscriptRepository transcriptRepository,
                                 OneClickOrchestrationRepository orchestrationRepository,
+                                ThumbnailService thumbnailService,
                                 ObjectMapper objectMapper) {
         this.metadataService = metadataService;
         this.projectService = projectService;
@@ -68,6 +72,7 @@ public class OneClickOrchestrator {
         this.segmentRepository = segmentRepository;
         this.transcriptRepository = transcriptRepository;
         this.orchestrationRepository = orchestrationRepository;
+        this.thumbnailService = thumbnailService;
         this.objectMapper = objectMapper;
     }
 
@@ -95,13 +100,13 @@ public class OneClickOrchestrator {
         try {
             MetadataResult metadata = resolveMetadata(request);
             String resolvedTitle = resolveTitle(request, metadata);
-            ProjectResolution projectResolution = resolveProject(request.ownerExternalSubject(), metadata, resolvedTitle);
+            ProjectResolution projectResolution = resolveProject(request.ownerExternalSubject(), metadata, resolvedTitle, request);
 
             UUID mediaId = resolveMedia(request, metadata, projectResolution.project());
             linkMedia(projectResolution.project().getId(), mediaId, request.ownerExternalSubject());
 
             OneClickRequest.Options options = request.opts() == null ? new OneClickRequest.Options(null, null, null, null, null) : request.opts();
-            OneClickJob detectJob = enqueueDetect(mediaId, options);
+            DetectOutcome detectOutcome = enqueueDetect(mediaId, options);
             OneClickRecommendation recs = enqueueRecommendationsIfReady(mediaId, request.ownerExternalSubject(), options);
 
             ThumbnailSource thumbnailSource = applyThumbnailIfPresent(projectResolution.project().getId(), metadata);
@@ -110,7 +115,7 @@ public class OneClickOrchestrator {
                     .projectId(projectResolution.project().getId())
                     .mediaId(mediaId)
                     .createdProject(projectResolution.created())
-                    .detectJob(detectJob)
+                    .detectJob(detectOutcome.job())
                     .recommendations(recs)
                     .renderJobs(Collections.emptyList())
                     .thumbnailSource(thumbnailSource.name())
@@ -119,6 +124,18 @@ public class OneClickOrchestrator {
             orchestration.setStatus(OrchestrationStatus.SUCCEEDED);
             orchestration.setResponsePayload(serialize(response));
             orchestrationRepository.save(orchestration);
+            LOGGER.info("OneClickOrchestrator DONE owner={} key={} projectId={} mediaId={} url={} provider={} lang={} topN={} enqueueRender={} thumbnailSource={} status={}",
+                    request.ownerExternalSubject(),
+                    request.idempotencyKey(),
+                    projectResolution.project().getId(),
+                    mediaId,
+                    request.url(),
+                    detectOutcome.provider(),
+                    detectOutcome.lang(),
+                    detectOutcome.requestedTopN(),
+                    detectOutcome.enqueueRender(),
+                    thumbnailSource,
+                    orchestration.getStatus());
             LOGGER.info("OneClickOrchestrator SCHEDULED owner={} projectId={} mediaId={} idempotencyKey={}",
                     request.ownerExternalSubject(), projectResolution.project().getId(), mediaId, request.idempotencyKey());
             return response;
@@ -152,18 +169,34 @@ public class OneClickOrchestrator {
         if (metadata != null && metadata.title() != null && !metadata.title().isBlank()) {
             return metadata.title();
         }
-        return "New project";
+        return null;
     }
 
-    private ProjectResolution resolveProject(String ownerExternalSubject, MetadataResult metadata, String title) {
-        String normalizedUrl = metadata != null ? metadata.url() : null;
-        Optional<Project> existing = projectService.findByNormalizedUrl(ownerExternalSubject, normalizedUrl);
-        if (existing.isPresent()) {
-            Project project = existing.get();
-            LOGGER.info("OneClickOrchestrator reuseProject owner={} projectId={} normalizedUrl={}", ownerExternalSubject, project.getId(), normalizedUrl);
+    private ProjectResolution resolveProject(String ownerExternalSubject, MetadataResult metadata, String title, OneClickRequest request) {
+        if (request.projectId() != null) {
+            Project project = projectService.get(request.projectId());
+            if (!project.getOwner().getExternalSubject().equals(ownerExternalSubject)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "PROJECT_NOT_OWNED");
+            }
+            LOGGER.info("OneClickOrchestrator reuseProjectById owner={} projectId={}", ownerExternalSubject, project.getId());
             return new ProjectResolution(project, false);
         }
-        Project created = projectService.createProjectBySubject(ownerExternalSubject, title, null, normalizedUrl);
+
+        String normalizedUrl = metadata != null ? metadata.url() : null;
+        if (normalizedUrl != null && !normalizedUrl.isBlank()) {
+            Optional<Project> existing = projectService.findByNormalizedUrl(ownerExternalSubject, normalizedUrl);
+            if (existing.isPresent()) {
+                Project project = existing.get();
+                LOGGER.info("OneClickOrchestrator reuseProject owner={} projectId={} normalizedUrl={}", ownerExternalSubject, project.getId(), normalizedUrl);
+                return new ProjectResolution(project, false);
+            }
+            String normalizedTitle = title != null && !title.isBlank() ? title : "New project";
+            Project created = projectService.createProjectBySubject(ownerExternalSubject, normalizedTitle, null, normalizedUrl);
+            return new ProjectResolution(created, true);
+        }
+
+        String uploadTitle = title != null && !title.isBlank() ? title : "New upload";
+        Project created = projectService.createProjectBySubject(ownerExternalSubject, uploadTitle, null, null);
         return new ProjectResolution(created, true);
     }
 
@@ -195,25 +228,40 @@ public class OneClickOrchestrator {
     }
 
     private void linkMedia(UUID projectId, UUID mediaId, String ownerExternalSubject) {
-        projectService.linkMediaStrict(projectId, mediaId);
-        LOGGER.info("OneClickOrchestrator linked media owner={} projectId={} mediaId={}", ownerExternalSubject, projectId, mediaId);
+        try {
+            projectService.linkMediaStrict(projectId, mediaId);
+            LOGGER.info("OneClickOrchestrator linked media owner={} projectId={} mediaId={}", ownerExternalSubject, projectId, mediaId);
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode() == HttpStatus.CONFLICT) {
+                LOGGER.info("OneClickOrchestrator media already linked owner={} projectId={} mediaId={}", ownerExternalSubject, projectId, mediaId);
+                return;
+            }
+            throw ex;
+        }
     }
 
-    private OneClickJob enqueueDetect(UUID mediaId, OneClickRequest.Options options) {
+    private DetectOutcome enqueueDetect(UUID mediaId, OneClickRequest.Options options) {
+        Media media = mediaRepository.findById(mediaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
+
         String lang = options.normalizedLang();
         String provider = options.normalizedProvider();
+        if (provider == null) {
+            Long durationMs = media.getDurationMs();
+            provider = (durationMs != null && durationMs > 25 * 60 * 1000L) ? "openai-diarize" : "fasterwhisper";
+        }
         Double sceneThreshold = options.normalizedSceneThreshold();
         Integer requested = options.resolvedTopN(DEFAULT_TOP_N);
         Boolean enqueueRender = options.shouldEnqueueRender(true);
         UUID jobId = detectionService.enqueueDetect(
                 mediaId,
                 lang == null ? "auto" : lang,
-                provider == null ? "fasterwhisper" : provider,
+                provider,
                 sceneThreshold,
                 requested,
                 enqueueRender
         );
-        return new OneClickJob(jobId, "ENQUEUED");
+        return new DetectOutcome(new OneClickJob(jobId, "ENQUEUED"), lang == null ? "auto" : lang, provider, requested, enqueueRender);
     }
 
     private OneClickRecommendation enqueueRecommendationsIfReady(UUID mediaId, String ownerExternalSubject, OneClickRequest.Options options) {
@@ -237,12 +285,15 @@ public class OneClickOrchestrator {
             projectService.patch(projectId, ProjectPatch.builder().thumbnailUrl(metadata.thumbnail()).build());
             return ThumbnailSource.YOUTUBE;
         }
-        return ThumbnailSource.NONE;
+        thumbnailService.registerFirstRenderFallback(projectId);
+        return ThumbnailSource.DEFERRED;
     }
 
     private OneClickOrchestration createOrchestrationRecord(OneClickRequest request, String requestFingerprint) {
         OneClickOrchestration orchestration = new OneClickOrchestration(request.ownerExternalSubject(), request.idempotencyKey());
         orchestration.setRequestFingerprint(requestFingerprint);
+        orchestration.setStatus(OrchestrationStatus.IN_PROGRESS);
+        orchestration.setStartedAt(Instant.now());
         orchestrationRepository.save(orchestration);
         return orchestration;
     }
@@ -302,6 +353,7 @@ public class OneClickOrchestrator {
         builder.append("owner:").append(request.ownerExternalSubject() == null ? "" : request.ownerExternalSubject().trim());
         builder.append("|url:").append(request.url() == null ? "" : request.url().trim());
         builder.append("|mediaId:").append(request.mediaId() == null ? "" : request.mediaId());
+        builder.append("|projectId:").append(request.projectId() == null ? "" : request.projectId());
         builder.append("|title:").append(request.title() == null ? "" : request.title().trim());
         OneClickRequest.Options opts = request.opts();
         if (opts != null) {
@@ -315,5 +367,8 @@ public class OneClickOrchestrator {
     }
 
     private record ProjectResolution(Project project, boolean created) {
+    }
+
+    private record DetectOutcome(OneClickJob job, String lang, String provider, int requestedTopN, boolean enqueueRender) {
     }
 }

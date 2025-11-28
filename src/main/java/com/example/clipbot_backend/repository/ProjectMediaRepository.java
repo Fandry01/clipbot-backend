@@ -18,6 +18,7 @@ import java.util.Optional;
 public interface ProjectMediaRepository extends JpaRepository<ProjectMediaLink, ProjectMediaId> {
     boolean existsByProjectAndMedia(Project project, Media media);
     List<ProjectMediaLink> findByProject(Project project);
+    List<ProjectMediaLink> findByMedia(Media media);
 
     @Query("""
            select pml.media

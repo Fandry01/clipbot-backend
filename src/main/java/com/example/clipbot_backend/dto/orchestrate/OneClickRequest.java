@@ -1,7 +1,6 @@
 package com.example.clipbot_backend.dto.orchestrate;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 
 import java.util.UUID;
 
@@ -14,7 +13,8 @@ public record OneClickRequest(
         UUID mediaId,
         String title,
         Options opts,
-        @NotBlank String idempotencyKey
+        @NotBlank String idempotencyKey,
+        UUID projectId
 ) {
     /**
      * User-supplied options with sensible defaults applied by the orchestrator.

@@ -9,6 +9,7 @@ import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
 import jakarta.annotation.Nullable;
@@ -36,6 +37,8 @@ public class ClipWorkFlow {
     private final SubtitleService subtitles;
     private final MediaRepository mediaRepo;
     private final AccountRepository accountRepo;
+    private final ProjectMediaRepository projectMediaRepository;
+    private final ThumbnailService thumbnailService;
     private TransactionTemplate txReqNew;
 
     public ClipWorkFlow(ClipRepository clipRepo,
@@ -43,7 +46,7 @@ public class ClipWorkFlow {
                         StorageService storage,
                         ClipRenderEngine renderEngine,
                         AssetRepository assetRepo,
-                        SubtitleService subtitles, MediaRepository mediaRepo, AccountRepository accountRepo, TransactionTemplate txReqNew) {
+                        SubtitleService subtitles, MediaRepository mediaRepo, AccountRepository accountRepo, ProjectMediaRepository projectMediaRepository, ThumbnailService thumbnailService, TransactionTemplate txReqNew) {
         this.clipRepo = clipRepo;
         this.transcriptRepo = transcriptRepo;
         this.storage = storage;
@@ -52,6 +55,8 @@ public class ClipWorkFlow {
         this.subtitles = subtitles;
         this.mediaRepo = mediaRepo;
         this.accountRepo = accountRepo;
+        this.projectMediaRepository = projectMediaRepository;
+        this.thumbnailService = thumbnailService;
         this.txReqNew = txReqNew;
     }
 
@@ -85,6 +90,8 @@ public class ClipWorkFlow {
                 thumb.setRelatedClip(clipRef);
                 thumb.setRelatedMedia(mediaRef);
                 assetRepo.save(thumb);
+                projectMediaRepository.findByMedia(mediaRef)
+                        .forEach(link -> thumbnailService.applyFallbackIfEligible(link.getProject(), res.thumbKey()));
             }
 
             if (subs != null) {

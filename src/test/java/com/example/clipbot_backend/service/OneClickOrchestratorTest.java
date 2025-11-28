@@ -12,6 +12,7 @@ import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -56,6 +57,8 @@ class OneClickOrchestratorTest {
     private TranscriptRepository transcriptRepository;
     @Mock
     private OneClickOrchestrationRepository orchestrationRepository;
+    @Mock
+    private ThumbnailService thumbnailService;
 
     private ObjectMapper objectMapper;
 
@@ -74,6 +77,7 @@ class OneClickOrchestratorTest {
                 segmentRepository,
                 transcriptRepository,
                 orchestrationRepository,
+                thumbnailService,
                 objectMapper
         );
         when(orchestrationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -96,7 +100,8 @@ class OneClickOrchestratorTest {
                 null,
                 "My import",
                 new OneClickRequest.Options("auto", "fasterwhisper", 0.3, 6, true),
-                "idem-1"
+                "idem-1",
+                null
         );
 
         MetadataResult metadata = new MetadataResult(MediaPlatform.YOUTUBE, "https://normalized", "Meta title", "auth", 120L, "thumb");
@@ -145,7 +150,8 @@ class OneClickOrchestratorTest {
                 mediaId,
                 null,
                 new OneClickRequest.Options(null, null, null, null, null),
-                "idem-2"
+                "idem-2",
+                null
         );
 
         when(projectService.findByNormalizedUrl(anyString(), any())).thenReturn(Optional.empty());
@@ -186,7 +192,7 @@ class OneClickOrchestratorTest {
             throw new RuntimeException(e);
         }
 
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com", null, null, null, "idem-3");
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com", null, null, null, "idem-3", null);
 
         when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey("demo", "idem-3"))
                 .thenReturn(Optional.of(entity));
@@ -199,7 +205,7 @@ class OneClickOrchestratorTest {
 
     @Test
     void orchestrateValidatesExclusiveInputs() {
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com", UUID.randomUUID(), null, null, "idem-4");
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com", UUID.randomUUID(), null, null, "idem-4", null);
 
         assertThatThrownBy(() -> orchestrator.orchestrate(request))
                 .isInstanceOf(ResponseStatusException.class)
@@ -212,12 +218,12 @@ class OneClickOrchestratorTest {
     void orchestrateRejectsMismatchedRequestForSameIdempotencyKey() {
         OneClickOrchestration existing = new OneClickOrchestration("demo", "idem-5");
         existing.setStatus(OrchestrationStatus.SUCCEEDED);
-        existing.setRequestFingerprint("owner:demo|url:https://example.com/a|mediaId:|title:Title");
+        existing.setRequestFingerprint("owner:demo|url:https://example.com/a|mediaId:|projectId:|title:Title");
 
         when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey("demo", "idem-5"))
                 .thenReturn(Optional.of(existing));
 
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com/b", null, "Title", null, "idem-5");
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com/b", null, "Title", null, "idem-5", null);
 
         assertThatThrownBy(() -> orchestrator.orchestrate(request))
                 .isInstanceOf(ResponseStatusException.class)

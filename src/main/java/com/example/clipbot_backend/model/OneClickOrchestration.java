@@ -46,6 +46,9 @@ public class OneClickOrchestration {
     @Column(name = "request_fingerprint", length = 512)
     private String requestFingerprint;
 
+    @Column(name = "started_at")
+    private Instant startedAt;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -113,5 +116,13 @@ public class OneClickOrchestration {
 
     public Instant getUpdatedAt() {
         return updatedAt;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public void setStartedAt(Instant startedAt) {
+        this.startedAt = startedAt;
     }
 }
