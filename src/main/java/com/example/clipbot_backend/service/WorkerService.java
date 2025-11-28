@@ -50,9 +50,10 @@ public class WorkerService {
     private final ClipRenderEngine renderEngine;
     private final StorageService storage;
     private final SubtitleService subtitles;
+    private final RenderService renderService;
 
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, RenderService renderService, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -70,6 +71,7 @@ public class WorkerService {
         this.renderEngine = renderEngine;
         this.storage = storage;
         this.subtitles = subtitles;
+        this.renderService = renderService;
         this.gptDiarizeEngine = gptDiarizeEngine;
         this.fasterWhisperEngine = fasterWhisperEngine;
     }
@@ -102,6 +104,16 @@ public class WorkerService {
                             clipService.setStatus(clipId, ClipStatus.FAILED);
                             jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
                         }
+                    }
+
+                    case EXPORT -> {
+                        LOGGER.debug("handle export start id={}", job.getId());
+                        renderService.handleExportJob(job);
+                    }
+
+                    case RENDER_CLEAN -> {
+                        LOGGER.debug("handle clean render start id={}", job.getId());
+                        handleCleanRender(job);
                     }
 
                     default -> LOGGER.warn("Unhandeld job type {}", job.getType());
@@ -212,6 +224,33 @@ void handleTranscribe(Job job) {
         // om payload compact te houden kun je eventueel alleen de eerste ~1–2 KB bewaren
         var s = sw.toString();
         return s.length() > 2000 ? s.substring(0, 2000) + "…(truncated)" : s;
+    }
+
+    @Transactional
+    void handleCleanRender(Job job) {
+        try {
+            UUID clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
+            Clip clip = clipRepo.findById(clipId).orElseThrow();
+            Media media = clip.getMedia();
+            Path srcPath = storage.resolveRaw(media.getObjectKey());
+            if (srcPath.getFileName().toString().toLowerCase().endsWith(".m4a")) {
+                Path mp4Sibling = srcPath.getParent().resolve("source.mp4");
+                if (java.nio.file.Files.exists(mp4Sibling)) {
+                    srcPath = mp4Sibling;
+                }
+            }
+            RenderOptions options = RenderOptions.withDefaults(Map.of(), null);
+            RenderResult res = renderEngine.renderClean(srcPath, clip.getStartMs(), clip.getEndMs(), options);
+
+            Asset clean = new Asset(media.getOwner(), AssetKind.CLIP_MP4_CLEAN, res.mp4Key(), res.mp4Size());
+            clean.setRelatedClip(clip);
+            clean.setRelatedMedia(media);
+            assetRepo.save(clean);
+            jobService.markDone(job.getId(), Map.of("clipId", clipId.toString(), "mp4Key", res.mp4Key()));
+        } catch (Exception e) {
+            LOGGER.error("Clean render failed id={} reason={}", job.getId(), e.toString(), e);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+        }
     }
 
 

@@ -22,6 +22,7 @@ public record ClipResponse(
         String captionVttKey,
         String thumbUrl,
         String mp4Url,
+        String subtitlesMode,
         Instant createdAt
 ) {
     public static ClipResponse from(Clip c, AssetRepository assetRepo) {
@@ -39,6 +40,7 @@ public record ClipResponse(
                 c.getCaptionVttKey(),
                 thumb != null ? AssetUrlBuilder.out(thumb.getObjectKey()) : null,
                 mp4   != null ? AssetUrlBuilder.out(mp4.getObjectKey())   : null,
+                "burned",
                 c.getCreatedAt()
         );
     }

@@ -12,7 +12,8 @@ public enum AssetKind {
     WEBM,
     THUMBNAIL,
     SUB_SRT,
-    SUB_VTT;
+    SUB_VTT,
+    CLIP_MP4_CLEAN;
 
     /**
      * Allows tolerant, case-insensitive deserialization from JSON to prevent 400 errors on valid input.
@@ -25,10 +26,14 @@ public enum AssetKind {
         if (value == null || value.isBlank()) {
             return null;
         }
+        String normalized = value.trim();
         for (AssetKind kind : values()) {
-            if (kind.name().equalsIgnoreCase(value.trim())) {
+            if (kind.name().equalsIgnoreCase(normalized)) {
                 return kind;
             }
+        }
+        if ("MP4_CLEAN".equalsIgnoreCase(normalized)) {
+            return CLIP_MP4_CLEAN;
         }
         throw new IllegalArgumentException("Unsupported AssetKind: " + value);
     }

@@ -4,7 +4,9 @@ import com.example.clipbot_backend.dto.RenderOptions;
 import com.example.clipbot_backend.dto.RenderResult;
 import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.dto.SubtitleFiles;
+import com.example.clipbot_backend.dto.render.SubtitleStyle;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
+import com.example.clipbot_backend.ffmpeg.AssStyleUtil;
 
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.util.SmartThumbnailer;
@@ -324,6 +326,91 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         }
 
         return new RenderResult(mp4Key, mp4Size, thumbKey, thumbSize);
+    }
+
+    @Override
+    public RenderResult renderClean(Path mediaFile, long startMs, long endMs, RenderOptions options) throws Exception {
+        RenderOptions opts = options != null
+                ? new RenderOptions(options.spec(), options.meta(), null)
+                : RenderOptions.withDefaults(Map.of(), null);
+        return render(mediaFile, startMs, endMs, opts);
+    }
+
+    @Override
+    public RenderResult renderStyled(Path mediaFile, Path subtitleFile, long startMs, long endMs, RenderSpec spec, SubtitleStyle style) throws Exception {
+        if (mediaFile == null || !Files.exists(mediaFile)) {
+            throw new IllegalArgumentException("Input file not found: " + mediaFile);
+        }
+        if (subtitleFile == null || !Files.exists(subtitleFile)) {
+            throw new IllegalArgumentException("Subtitle file not found: " + subtitleFile);
+        }
+        if (startMs < 0 || endMs <= startMs) {
+            throw new IllegalArgumentException("Invalid range: startMs=" + startMs + ", endMs=" + endMs);
+        }
+
+        RenderSpec effective = spec != null ? spec : RenderSpec.DEFAULT;
+        if (effective.profile() != null && !effective.profile().isBlank()) {
+            effective = applyProfile(effective);
+        }
+
+        int width = orDefault(effective.width(), RenderSpec.DEFAULT.width());
+        int height = orDefault(effective.height(), RenderSpec.DEFAULT.height());
+        long durMs = endMs - startMs;
+        double durSec = durMs / 1000.0;
+
+        String forceStyle = AssStyleUtil.buildForceStyle(style);
+        String subFilter = String.format(
+                "subtitles='%s':force_style='%s'",
+                escapeForFilter(subtitleFile.toAbsolutePath().toString()),
+                forceStyle.replace("'", "\\'")
+        );
+        if (fontsDir != null) {
+            subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
+        }
+        String vf = "scale=" + width + ":" + height + ":force_original_aspect_ratio=decrease," +
+                "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2," + subFilter;
+
+        String outName = "export-" + UUID.randomUUID() + ".mp4";
+        Path tmpOut = workDir.resolve(outName);
+
+        List<String> cmd = List.of(
+                ffmpegBin, "-y",
+                "-ss", String.format(java.util.Locale.ROOT, "%.3f", startMs / 1000.0),
+                "-i", mediaFile.toAbsolutePath().toString(),
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-r", "30",
+                "-c:a", "aac", "-b:a", "128k",
+                "-t", String.format(java.util.Locale.ROOT, "%.3f", durSec),
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                tmpOut.toAbsolutePath().toString()
+        );
+        LOGGER.info("FFmpeg styled command: {}", String.join(" ", cmd));
+
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        StringBuilder outBuf = new StringBuilder();
+        try (var br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            br.lines().forEach(line -> {
+                LOGGER.debug("[ffmpeg-export] {}", line);
+                outBuf.append(line).append('\n');
+            });
+        }
+        boolean finished = p.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        if (!finished) {
+            p.destroyForcibly();
+            throw new RuntimeException("ffmpeg styled render timed out\n" + outBuf);
+        }
+        if (p.exitValue() != 0) {
+            throw new RuntimeException("ffmpeg styled render failed with exit " + p.exitValue() + "\n" + outBuf);
+        }
+
+        String mp4Key = "clips/export-" + outName;
+        storageService.uploadToOut(tmpOut, mp4Key);
+        long mp4Size = Files.size(tmpOut);
+        try {
+            Files.deleteIfExists(tmpOut);
+        } catch (Exception ignore) {
+        }
+        return new RenderResult(mp4Key, mp4Size, null, 0L);
     }
 
 
