@@ -8,6 +8,8 @@ import com.example.clipbot_backend.model.OneClickOrchestration;
 import com.example.clipbot_backend.model.Project;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.OneClickOrchestrationRepository;
+import com.example.clipbot_backend.repository.SegmentRepository;
+import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.util.MediaPlatform;
@@ -49,6 +51,10 @@ class OneClickOrchestratorTest {
     @Mock
     private RecommendationService recommendationService;
     @Mock
+    private SegmentRepository segmentRepository;
+    @Mock
+    private TranscriptRepository transcriptRepository;
+    @Mock
     private OneClickOrchestrationRepository orchestrationRepository;
 
     private ObjectMapper objectMapper;
@@ -65,6 +71,8 @@ class OneClickOrchestratorTest {
                 mediaRepository,
                 detectionService,
                 recommendationService,
+                segmentRepository,
+                transcriptRepository,
                 orchestrationRepository,
                 objectMapper
         );
@@ -98,7 +106,9 @@ class OneClickOrchestratorTest {
         when(projectService.findByNormalizedUrl(anyString(), anyString())).thenReturn(Optional.empty());
         when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
         when(mediaService.createMediaFromUrl(any(), any(), any(), anyString(), any(), any())).thenReturn(mediaId);
-        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any())).thenReturn(jobId);
+        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
+        when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
+        when(segmentRepository.countByMediaId(mediaId)).thenReturn(3L);
         when(recommendationService.computeRecommendations(any(), anyInt(), any(), any())).thenReturn(new com.example.clipbot_backend.dto.RecommendationResult(mediaId, 2, java.util.List.of()));
 
         OneClickResponse response = orchestrator.orchestrate(request);
@@ -143,7 +153,9 @@ class OneClickOrchestratorTest {
                 .thenReturn(Optional.empty());
         when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
         when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
-        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any())).thenReturn(jobId);
+        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
+        when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
+        when(segmentRepository.countByMediaId(mediaId)).thenReturn(2L);
         when(recommendationService.computeRecommendations(any(), anyInt(), any(), any())).thenReturn(new com.example.clipbot_backend.dto.RecommendationResult(mediaId, 1, java.util.List.of()));
 
         OneClickResponse response = orchestrator.orchestrate(request);
@@ -182,7 +194,7 @@ class OneClickOrchestratorTest {
         OneClickResponse response = orchestrator.orchestrate(request);
 
         assertThat(response.getProjectId()).isEqualTo(projectId);
-        verify(detectionService, never()).enqueueDetect(any(), anyString(), anyString(), any());
+        verify(detectionService, never()).enqueueDetect(any(), anyString(), anyString(), any(), any(), any());
     }
 
     @Test

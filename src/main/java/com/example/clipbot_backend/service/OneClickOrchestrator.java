@@ -11,6 +11,8 @@ import com.example.clipbot_backend.model.OneClickOrchestration;
 import com.example.clipbot_backend.model.Project;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.OneClickOrchestrationRepository;
+import com.example.clipbot_backend.repository.SegmentRepository;
+import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.util.MediaPlatform;
@@ -42,6 +44,8 @@ public class OneClickOrchestrator {
     private final MediaRepository mediaRepository;
     private final DetectionService detectionService;
     private final RecommendationService recommendationService;
+    private final SegmentRepository segmentRepository;
+    private final TranscriptRepository transcriptRepository;
     private final OneClickOrchestrationRepository orchestrationRepository;
     private final ObjectMapper objectMapper;
 
@@ -51,6 +55,8 @@ public class OneClickOrchestrator {
                                 MediaRepository mediaRepository,
                                 DetectionService detectionService,
                                 RecommendationService recommendationService,
+                                SegmentRepository segmentRepository,
+                                TranscriptRepository transcriptRepository,
                                 OneClickOrchestrationRepository orchestrationRepository,
                                 ObjectMapper objectMapper) {
         this.metadataService = metadataService;
@@ -59,6 +65,8 @@ public class OneClickOrchestrator {
         this.mediaRepository = mediaRepository;
         this.detectionService = detectionService;
         this.recommendationService = recommendationService;
+        this.segmentRepository = segmentRepository;
+        this.transcriptRepository = transcriptRepository;
         this.orchestrationRepository = orchestrationRepository;
         this.objectMapper = objectMapper;
     }
@@ -93,7 +101,7 @@ public class OneClickOrchestrator {
 
             OneClickRequest.Options options = request.opts() == null ? new OneClickRequest.Options(null, null, null, null, null) : request.opts();
             OneClickJob detectJob = enqueueDetect(mediaId, options);
-            OneClickRecommendation recs = enqueueRecommendations(mediaId, request.ownerExternalSubject(), options);
+            OneClickRecommendation recs = enqueueRecommendationsIfReady(mediaId, request.ownerExternalSubject(), options);
 
             ThumbnailSource thumbnailSource = applyThumbnailIfPresent(projectResolution.project().getId(), metadata);
 
@@ -110,7 +118,7 @@ public class OneClickOrchestrator {
             orchestration.setStatus(OrchestrationStatus.SUCCEEDED);
             orchestration.setResponsePayload(serialize(response));
             orchestrationRepository.save(orchestration);
-            LOGGER.info("OneClickOrchestrator DONE owner={} projectId={} mediaId={} idempotencyKey={}",
+            LOGGER.info("OneClickOrchestrator SCHEDULED owner={} projectId={} mediaId={} idempotencyKey={}",
                     request.ownerExternalSubject(), projectResolution.project().getId(), mediaId, request.idempotencyKey());
             return response;
         } catch (ResponseStatusException ex) {
@@ -194,13 +202,30 @@ public class OneClickOrchestrator {
         String lang = options.normalizedLang();
         String provider = options.normalizedProvider();
         Double sceneThreshold = options.normalizedSceneThreshold();
-        UUID jobId = detectionService.enqueueDetect(mediaId, lang == null ? "auto" : lang, provider == null ? "fasterwhisper" : provider, sceneThreshold);
+        Integer requested = options.resolvedTopN(DEFAULT_TOP_N);
+        Boolean enqueueRender = options.shouldEnqueueRender(true);
+        UUID jobId = detectionService.enqueueDetect(
+                mediaId,
+                lang == null ? "auto" : lang,
+                provider == null ? "fasterwhisper" : provider,
+                sceneThreshold,
+                requested,
+                enqueueRender
+        );
         return new OneClickJob(jobId, "ENQUEUED");
     }
 
-    private OneClickRecommendation enqueueRecommendations(UUID mediaId, String ownerExternalSubject, OneClickRequest.Options options) {
+    private OneClickRecommendation enqueueRecommendationsIfReady(UUID mediaId, String ownerExternalSubject, OneClickRequest.Options options) {
         int requested = options.resolvedTopN(DEFAULT_TOP_N);
         boolean enqueueRender = options.shouldEnqueueRender(true);
+        boolean detectReady = transcriptRepository.existsByMediaId(mediaId)
+                && segmentRepository.countByMediaId(mediaId) > 0;
+
+        if (!detectReady) {
+            LOGGER.info("OneClickOrchestrator recommendations deferred owner={} mediaId={} requested={} reason=detect_pending", ownerExternalSubject, mediaId, requested);
+            return new OneClickRecommendation(requested, 0);
+        }
+
         int computed = recommendationService.computeRecommendations(mediaId, requested, null, enqueueRender).count();
         LOGGER.info("OneClickOrchestrator recommendations owner={} mediaId={} requested={} computed={} enqueueRender={}", ownerExternalSubject, mediaId, requested, computed, enqueueRender);
         return new OneClickRecommendation(requested, computed);

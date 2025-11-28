@@ -24,4 +24,6 @@ public interface SegmentRepository extends JpaRepository<Segment, UUID> {
     @Transactional
     @Query("delete from Segment s where s.media = :media")
     int deleteByMedia(@Param("media") Media media);
+
+    long countByMediaId(UUID mediaId);
 }

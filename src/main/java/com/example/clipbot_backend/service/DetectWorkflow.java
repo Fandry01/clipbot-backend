@@ -12,6 +12,7 @@ import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
+import com.example.clipbot_backend.service.RecommendationService;
 import com.example.clipbot_backend.util.MediaStatus;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.handler.timeout.TimeoutException;
@@ -39,8 +40,11 @@ public class DetectWorkflow {
     private final FasterWhisperClient fastWhisperClient;
     private final AudioWindowService audioWindowService;
     private final UrlDownloader urlDownloader;
+    private final RecommendationService recommendationService;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, UrlDownloader urlDownloader) {
+    private static final int DEFAULT_TOP_N = 6;
+
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, UrlDownloader urlDownloader, RecommendationService recommendationService) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
@@ -49,6 +53,7 @@ public class DetectWorkflow {
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
         this.urlDownloader = urlDownloader;
+        this.recommendationService = recommendationService;
     }
 
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
@@ -77,6 +82,8 @@ public class DetectWorkflow {
 
             // TX B: segments persist (REQUIRES_NEW)
             persistSegments(media.getId(), refined);
+
+            triggerRecommendationsIfRequested(media.getId(), payload);
 
             // TX C: media status blijft PROCESSING (render zet READY)
             return refined.size();
@@ -230,6 +237,27 @@ public class DetectWorkflow {
         }
     }
 
+    private void triggerRecommendationsIfRequested(UUID mediaId, Map<String, Object> payload) {
+        if (payload == null) {
+            return;
+        }
+        Integer requested = parseInteger(payload, "topN");
+        Boolean enqueueRender = parseBoolean(payload, "enqueueRender");
+        int topN = requested == null || requested <= 0 ? DEFAULT_TOP_N : requested;
+        boolean render = enqueueRender == null || enqueueRender;
+
+        if (requested == null && enqueueRender == null) {
+            return;
+        }
+
+        try {
+            int computed = recommendationService.computeRecommendations(mediaId, topN, null, render).count();
+            LOGGER.info("DetectWorkflow recommendations media={} requested={} computed={} enqueueRender={}", mediaId, topN, computed, render);
+        } catch (Exception ex) {
+            LOGGER.warn("DetectWorkflow recommendations failed media={} err={}", mediaId, ex.toString());
+        }
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     protected void markFailed(UUID mediaId, Exception e) {
         var media = mediaRepo.findById(mediaId).orElseThrow();
@@ -239,6 +267,29 @@ public class DetectWorkflow {
     }
 
 
+
+    private static Integer parseInteger(Map<String, Object> payload, String key) {
+        if (payload == null) return null;
+        Object v = payload.get(key);
+        if (v instanceof Number n) return n.intValue();
+        try {
+            return v == null ? null : Integer.parseInt(v.toString());
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private static Boolean parseBoolean(Map<String, Object> payload, String key) {
+        if (payload == null) return null;
+        Object v = payload.get(key);
+        if (v instanceof Boolean b) return b;
+        if (v != null) {
+            String s = v.toString().trim().toLowerCase(Locale.ROOT);
+            if (s.equals("true")) return Boolean.TRUE;
+            if (s.equals("false")) return Boolean.FALSE;
+        }
+        return null;
+    }
 
     private static Double parseDouble(Map<String,Object> m, String k) {
         if (m == null) return null;

@@ -42,11 +42,22 @@ public class DetectionService {
     }
 
     public UUID enqueueDetect(UUID mediaId, String lang, String provider, Double sceneThreshold){
+        return enqueueDetect(mediaId, lang, provider, sceneThreshold, null, null);
+    }
+
+    public UUID enqueueDetect(UUID mediaId,
+                              String lang,
+                              String provider,
+                              Double sceneThreshold,
+                              Integer topN,
+                              Boolean enqueueRender) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
-        Map<String,Object> payload = new LinkedHashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
         if (lang != null) payload.put("lang", lang);
         if (provider != null) payload.put("provider", provider);
         if (sceneThreshold != null) payload.put("sceneThreshold", sceneThreshold);
+        if (topN != null) payload.put("topN", topN);
+        if (enqueueRender != null) payload.put("enqueueRender", enqueueRender);
         return jobService.enqueue(media.getId(), JobType.DETECT, payload);
     }
 
