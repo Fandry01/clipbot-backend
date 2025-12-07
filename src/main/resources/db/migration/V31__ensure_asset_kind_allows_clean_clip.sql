@@ -1,4 +1,4 @@
--- Re-apply asset_kind_check to include CLIP_MP4_CLEAN in case prior migration was skipped
+-- Ensure asset_kind_check accepts CLIP_MP4_CLEAN in environments where V29 was skipped or modified
 ALTER TABLE asset DROP CONSTRAINT IF EXISTS asset_kind_check;
 
 ALTER TABLE asset
