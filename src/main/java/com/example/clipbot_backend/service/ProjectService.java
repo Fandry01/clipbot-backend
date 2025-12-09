@@ -10,6 +10,8 @@ import com.example.clipbot_backend.model.ProjectMediaLink;
 import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.util.ClipStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -24,6 +26,8 @@ import java.util.UUID;
 
 @Service
 public class ProjectService {
+    private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
+
     private final ProjectRepository projectRepository;
     private final ProjectMediaRepository projectMediaRepository;
     private final AccountService accountService;
@@ -246,9 +250,11 @@ public class ProjectService {
         var project = ensureProjectOwnedBy(projectId, owner);
 
         var mediaList = projectMediaRepository.findMediaByProject(project);
+        log.info("START delete project id={} ownerId={} mediaCount={}", project.getId(), owner.getId(), mediaList.size());
         if (!mediaList.isEmpty()) {
             var clips = clipRepository.findByMediaIn(mediaList);
             if (!clips.isEmpty()) {
+                log.info("Deleting clips for project id={} clipCount={}", project.getId(), clips.size());
                 assetRepository.deleteByRelatedClipIn(clips);
                 clipRepository.deleteAll(clips);
             }
@@ -260,6 +266,8 @@ public class ProjectService {
         }
 
         projectRepository.delete(project);
+
+        log.info("DONE delete project id={} ownerId={} mediaCount={}", project.getId(), owner.getId(), mediaList.size());
     }
 
 

@@ -16,6 +16,8 @@ import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
 
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -31,6 +33,8 @@ import java.util.UUID;
 
 @Service
 public class ClipService {
+    private static final Logger log = LoggerFactory.getLogger(ClipService.class);
+
     private final ClipRepository clipRepo;
     private final MediaRepository mediaRepo;
     private final SegmentRepository segmentRepo;
@@ -202,8 +206,20 @@ public class ClipService {
     public void deleteClip(Clip clip) {
         Objects.requireNonNull(clip, "clip");
 
+        var media = clip.getMedia();
+        var owner = media != null ? media.getOwner() : null;
+        log.info("START delete clip id={} mediaId={} ownerId={}",
+                clip.getId(),
+                media != null ? media.getId() : null,
+                owner != null ? owner.getId() : null);
+
         assetRepository.deleteByRelatedClipIn(List.of(clip));
         clipRepo.delete(clip);
+
+        log.info("DONE delete clip id={} mediaId={} ownerId={}",
+                clip.getId(),
+                media != null ? media.getId() : null,
+                owner != null ? owner.getId() : null);
     }
 
 
