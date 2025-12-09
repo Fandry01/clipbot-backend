@@ -119,6 +119,20 @@ public class ClipController {
         ensureOwnedBy(clip, ownerExternalSubject);
         clipService.setStatus(id, status);
     }
+
+    /**
+     * Verwijdert een clip en alle gekoppelde assets.
+     *
+     * @param id clip-identificatie die moet worden verwijderd.
+     * @param ownerExternalSubject eigenaar die moet overeenkomen (admin mag overslaan).
+     */
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable UUID id, @RequestParam String ownerExternalSubject) {
+        var clip = clipService.getWithMedia(id);
+        ensureOwnedBy(clip, ownerExternalSubject);
+        clipService.deleteClip(clip);
+    }
     private void ensureOwnedBy(Clip clip, String sub) {
         if (isAdmin(sub)) return; // admin bypass
         var owner = clip.getMedia().getOwner().getExternalSubject();

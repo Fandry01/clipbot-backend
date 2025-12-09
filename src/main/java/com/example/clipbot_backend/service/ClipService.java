@@ -5,6 +5,7 @@ import com.example.clipbot_backend.dto.RenderSpec;
 import com.example.clipbot_backend.model.Clip;
 
 import com.example.clipbot_backend.model.Media;
+import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.JobRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -35,14 +37,22 @@ public class ClipService {
     private final JobRepository jobRepo;
     private final EntitlementService entitlementService;
     private final RenderProfileResolver renderProfileResolver;
+    private final AssetRepository assetRepository;
 
-    public ClipService(ClipRepository clipRepo, MediaRepository mediaRepo, SegmentRepository segmentRepo, JobRepository jobRepo, EntitlementService entitlementService, RenderProfileResolver renderProfileResolver) {
+    public ClipService(ClipRepository clipRepo,
+                       MediaRepository mediaRepo,
+                       SegmentRepository segmentRepo,
+                       JobRepository jobRepo,
+                       EntitlementService entitlementService,
+                       RenderProfileResolver renderProfileResolver,
+                       AssetRepository assetRepository) {
         this.clipRepo = clipRepo;
         this.mediaRepo = mediaRepo;
         this.segmentRepo = segmentRepo;
         this.jobRepo = jobRepo;
         this.entitlementService = entitlementService;
         this.renderProfileResolver = renderProfileResolver;
+        this.assetRepository = assetRepository;
     }
 
     @Transactional
@@ -97,6 +107,19 @@ public class ClipService {
     public Clip get(UUID clipId) {
         return clipRepo.findById(clipId).orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
+    }
+
+    /**
+     * Haalt een clip op inclusief media en owner zodat ownership-checks buiten een transactie kunnen gebeuren.
+     *
+     * @param clipId clip-identificatie.
+     * @return clip met eagerly geladen media en owner.
+     * @throws ResponseStatusException wanneer de clip niet bestaat.
+     */
+    @Transactional(readOnly = true)
+    public Clip getWithMedia(UUID clipId) {
+        return clipRepo.findByIdWithMedia(clipId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Clip not found: " + clipId));
     }
     @Transactional
     public UUID enqueueRender(JobService jobs, UUID clipId) {
@@ -168,6 +191,19 @@ public class ClipService {
     public Clip save(Clip clip){
         return clipRepo.save(clip);
 
+    }
+
+    /**
+     * Verwijdert een clip en alle gekoppelde assets.
+     *
+     * @param clip clip-entiteit die verwijderd moet worden, inclusief geladen media/owner.
+     */
+    @Transactional
+    public void deleteClip(Clip clip) {
+        Objects.requireNonNull(clip, "clip");
+
+        assetRepository.deleteByRelatedClipIn(List.of(clip));
+        clipRepo.delete(clip);
     }
 
 
