@@ -225,6 +225,43 @@ public class ProjectService {
         return page.map(clip -> ClipResponse.from(clip,assetRepository));
     }
 
+    /**
+     * Deletes a project, all of its project-media links and every clip generated from the linked media.
+     *
+     * @param projectId identifier of the project to remove.
+     * @param ownerId owner that must match the project; {@code null} is rejected.
+     * @throws ResponseStatusException when the project does not exist or is not owned by the caller.
+     *
+     * Side-effects:
+     * - Removes assets tied to clips that belong to the project's media.
+     * - Deletes clips for all media linked to the project.
+     * - Deletes project-media link rows before removing the project itself.
+     *
+     * Example:
+     * deleteProject(UUID.fromString("7d692e1d-9cf5-4d83-a3bf-7fbdd5f20906"), ownerId);
+     */
+    @Transactional
+    public void deleteProject(UUID projectId, UUID ownerId) {
+        var owner = accountService.getByIdOrThrow(ownerId);
+        var project = ensureProjectOwnedBy(projectId, owner);
+
+        var mediaList = projectMediaRepository.findMediaByProject(project);
+        if (!mediaList.isEmpty()) {
+            var clips = clipRepository.findByMediaIn(mediaList);
+            if (!clips.isEmpty()) {
+                assetRepository.deleteByRelatedClipIn(clips);
+                clipRepository.deleteAll(clips);
+            }
+        }
+
+        var links = projectMediaRepository.findByProject(project);
+        if (!links.isEmpty()) {
+            projectMediaRepository.deleteAll(links);
+        }
+
+        projectRepository.delete(project);
+    }
+
 
     /* ---------- HELPERS ---------- */
 

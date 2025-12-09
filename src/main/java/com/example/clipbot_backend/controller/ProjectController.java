@@ -75,6 +75,28 @@ public class ProjectController {
         return ProjectResponse.from(project);
     }
 
+    /**
+     * Verwijdert een project en alle clips die gekoppeld zijn via de projectmedia.
+     *
+     * @param projectId te verwijderen project-id.
+     * @param ownerId optioneel directe owner-id (fallback voor oudere clients).
+     * @param ownerExternalSubject optionele externe subjectreferentie om de owner te bepalen.
+     *
+     * Side-effects:
+     * - Deletet clip-assets en clips voor alle gelinkte media.
+     * - Verwijdert project-media links en het project zelf.
+     *
+     * Voorbeeld: DELETE /v1/projects/{projectId}?ownerExternalSubject=auth0|user-123
+     */
+    @DeleteMapping("/{projectId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteProject(@PathVariable UUID projectId,
+                              @RequestParam(required = false) UUID ownerId,
+                              @RequestParam(required = false) String ownerExternalSubject) {
+        UUID resolvedOwnerId = resolveOwnerParam(ownerId, ownerExternalSubject);
+        projectService.deleteProject(projectId, resolvedOwnerId);
+    }
+
     @PostMapping("/{projectId}/media")
     @ResponseStatus(HttpStatus.CREATED)
     public ProjectMediaLinkResponse linkMedia(@PathVariable UUID projectId, @RequestBody LinkReq req) {
