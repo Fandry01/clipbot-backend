@@ -5,5 +5,7 @@ public enum JobType {
     DETECT,
     CLIP,
     THUMBNAIL,
-    DOWNLOAD
+    DOWNLOAD,
+    EXPORT,
+    RENDER_CLEAN
 }

@@ -22,11 +22,15 @@ public record ClipResponse(
         String captionVttKey,
         String thumbUrl,
         String mp4Url,
+        String subtitlesMode,
         Instant createdAt
 ) {
     public static ClipResponse from(Clip c, AssetRepository assetRepo) {
         var thumb = assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.THUMBNAIL).orElse(null);
-        var mp4   = assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.MP4).orElse(null);
+        var clean = assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.CLIP_MP4_CLEAN).orElse(null);
+        var mp4   = clean != null
+                ? clean
+                : assetRepo.findTopByRelatedClipAndKindOrderByCreatedAtDesc(c, AssetKind.MP4).orElse(null);
         return new ClipResponse(
                 c.getId(),
                 c.getMedia().getId(),
@@ -39,6 +43,7 @@ public record ClipResponse(
                 c.getCaptionVttKey(),
                 thumb != null ? AssetUrlBuilder.out(thumb.getObjectKey()) : null,
                 mp4   != null ? AssetUrlBuilder.out(mp4.getObjectKey())   : null,
+                (clean != null) ? "clean" : "burned",
                 c.getCreatedAt()
         );
     }

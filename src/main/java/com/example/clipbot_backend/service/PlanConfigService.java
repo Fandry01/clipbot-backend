@@ -21,7 +21,7 @@ public class PlanConfigService {
 
     public PlanConfigService(PlanLimitsRepository planLimitsRepository) {
         this.planLimitsRepository = planLimitsRepository;
-        defaultLimits.put(PlanTier.TRIAL, buildDefaults("TRIAL", 10, 60, false, false, true));
+        defaultLimits.put(PlanTier.TRIAL, buildDefaults("TRIAL", 50, 60, false, false, true));
         defaultLimits.put(PlanTier.STARTER, buildDefaults("STARTER", 40, 400, true, false, false));
         defaultLimits.put(PlanTier.PRO, buildDefaults("PRO", 120, 1200, true, false, false));
     }
