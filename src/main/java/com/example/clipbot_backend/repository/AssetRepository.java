@@ -8,7 +8,9 @@ import com.example.clipbot_backend.util.AssetKind;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,5 +23,8 @@ public interface AssetRepository extends JpaRepository<Asset, UUID> {
     Optional<Asset> findTopByRelatedMediaAndKindOrderByCreatedAtDesc(Media media, AssetKind kind);
     Page<Asset> findByRelatedClipAndKindOrderByCreatedAtDesc(Clip clip, AssetKind kind, Pageable pageable);
     Page<Asset> findByRelatedMediaAndKindOrderByCreatedAtDesc(Media media, AssetKind kind, Pageable pageable);
+
+    @Transactional
+    void deleteByRelatedClipIn(Collection<Clip> clips);
 
 }

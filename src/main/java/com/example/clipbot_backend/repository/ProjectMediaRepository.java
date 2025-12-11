@@ -12,8 +12,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 public interface ProjectMediaRepository extends JpaRepository<ProjectMediaLink, ProjectMediaId> {
     boolean existsByProjectAndMedia(Project project, Media media);
@@ -47,5 +49,18 @@ public interface ProjectMediaRepository extends JpaRepository<ProjectMediaLink, 
 
     @Query("select pml from ProjectMediaLink pml where pml.project = :project order by pml.createdAt desc")
     Page<ProjectMediaLink> findByProjectOrderByCreatedAtDesc(@Param("project") Project project, Pageable pageable);
+
+    @Query("""
+           select pml.media.id as mediaId, count(pml) as linkCount
+           from ProjectMediaLink pml
+           where pml.media in :media
+           group by pml.media.id
+           """)
+    List<MediaLinkCount> countByMediaIn(@Param("media") Collection<Media> media);
+
+    interface MediaLinkCount {
+        UUID getMediaId();
+        long getLinkCount();
+    }
 
 }

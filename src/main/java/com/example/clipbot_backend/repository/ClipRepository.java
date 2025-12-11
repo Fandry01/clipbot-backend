@@ -75,4 +75,12 @@ public interface ClipRepository extends JpaRepository<Clip, UUID> {
      */
     Optional<Clip> findByMediaIdAndStartMsAndEndMsAndProfileHash(UUID mediaId, long startMs, long endMs, String profileHash);
 
+    /**
+     * Returns all clips associated with any of the provided media records.
+     *
+     * @param media list of media identifiers to match.
+     * @return list of clips linked to the supplied media set.
+     */
+    List<Clip> findByMediaIn(Collection<Media> media);
+
 }
