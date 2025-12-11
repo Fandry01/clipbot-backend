@@ -230,15 +230,15 @@ public class ProjectService {
     }
 
     /**
-     * Deletes a project, all of its project-media links and every clip generated from the linked media.
+     * Deletes a project and its project-media links.
+     * <p>
+     * Clips remain intact so that media reused by other projecten or workflows keeps its clips.
      *
      * @param projectId identifier of the project to remove.
      * @param ownerId owner that must match the project; {@code null} is rejected.
      * @throws ResponseStatusException when the project does not exist or is not owned by the caller.
      *
      * Side-effects:
-     * - Removes assets tied to clips that belong to the project's media.
-     * - Deletes clips for all media linked to the project.
      * - Deletes project-media link rows before removing the project itself.
      *
      * Example:
@@ -249,25 +249,15 @@ public class ProjectService {
         var owner = accountService.getByIdOrThrow(ownerId);
         var project = ensureProjectOwnedBy(projectId, owner);
 
-        var mediaList = projectMediaRepository.findMediaByProject(project);
-        log.info("START delete project id={} ownerId={} mediaCount={}", project.getId(), owner.getId(), mediaList.size());
-        if (!mediaList.isEmpty()) {
-            var clips = clipRepository.findByMediaIn(mediaList);
-            if (!clips.isEmpty()) {
-                log.info("Deleting clips for project id={} clipCount={}", project.getId(), clips.size());
-                assetRepository.deleteByRelatedClipIn(clips);
-                clipRepository.deleteAll(clips);
-            }
-        }
-
         var links = projectMediaRepository.findByProject(project);
+        log.info("START delete project id={} ownerId={} linkCount={}", project.getId(), owner.getId(), links.size());
         if (!links.isEmpty()) {
             projectMediaRepository.deleteAll(links);
         }
 
         projectRepository.delete(project);
 
-        log.info("DONE delete project id={} ownerId={} mediaCount={}", project.getId(), owner.getId(), mediaList.size());
+        log.info("DONE delete project id={} ownerId={} linkCount={}", project.getId(), owner.getId(), links.size());
     }
 
 
