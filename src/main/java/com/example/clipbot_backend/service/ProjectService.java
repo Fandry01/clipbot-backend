@@ -21,8 +21,11 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class ProjectService {
@@ -230,16 +233,17 @@ public class ProjectService {
     }
 
     /**
-     * Deletes a project and its project-media links.
+     * Deletes a project, its project-media links and the clips that are exclusive to this project.
      * <p>
-     * Clips remain intact so that media reused by other projecten or workflows keeps its clips.
+     * Clips that belong to media linked by multiple projects remain available for the other projects.
      *
      * @param projectId identifier of the project to remove.
      * @param ownerId owner that must match the project; {@code null} is rejected.
      * @throws ResponseStatusException when the project does not exist or is not owned by the caller.
      *
      * Side-effects:
-     * - Deletes project-media link rows before removing the project itself.
+     * - Deletes clip assets and clips for media that are only linked to this project.
+     * - Removes project-media link rows before deleting the project itself.
      *
      * Example:
      * deleteProject(UUID.fromString("7d692e1d-9cf5-4d83-a3bf-7fbdd5f20906"), ownerId);
@@ -250,14 +254,48 @@ public class ProjectService {
         var project = ensureProjectOwnedBy(projectId, owner);
 
         var links = projectMediaRepository.findByProject(project);
-        log.info("START delete project id={} ownerId={} linkCount={}", project.getId(), owner.getId(), links.size());
+        var media = links.stream()
+                .map(ProjectMediaLink::getMedia)
+                .filter(Objects::nonNull)
+                .toList();
+
+        Map<UUID, Long> linkCountByMediaId = media.isEmpty()
+                ? Map.of()
+                : projectMediaRepository.countByMediaIn(media).stream()
+                        .collect(Collectors.toMap(ProjectMediaRepository.MediaLinkCount::getMediaId,
+                                ProjectMediaRepository.MediaLinkCount::getLinkCount));
+
+        var exclusiveMedia = media.stream()
+                .filter(m -> linkCountByMediaId.getOrDefault(m.getId(), 0L) <= 1)
+                .toList();
+        var sharedMedia = media.size() - exclusiveMedia.size();
+
+        log.info(
+                "START delete project id={} ownerId={} linkCount={} exclusiveMedia={} sharedMedia={}",
+                project.getId(), owner.getId(), links.size(), exclusiveMedia.size(), sharedMedia);
+
+        int deletedClipCount = 0;
+        if (!exclusiveMedia.isEmpty()) {
+            var clipsToDelete = clipRepository.findByMediaIn(exclusiveMedia);
+            deletedClipCount = clipsToDelete.size();
+            if (!clipsToDelete.isEmpty()) {
+                assetRepository.deleteByRelatedClipIn(clipsToDelete);
+                clipRepository.deleteAll(clipsToDelete);
+            }
+            log.info("DELETE clips for exclusive media projectId={} ownerId={} clips={}",
+                    project.getId(), owner.getId(), deletedClipCount);
+        }
+
         if (!links.isEmpty()) {
             projectMediaRepository.deleteAll(links);
         }
 
         projectRepository.delete(project);
 
-        log.info("DONE delete project id={} ownerId={} linkCount={}", project.getId(), owner.getId(), links.size());
+        log.info(
+                "DONE delete project id={} ownerId={} linkCount={} exclusiveMedia={} sharedMedia={} deletedClips={}",
+                project.getId(), owner.getId(), links.size(), exclusiveMedia.size(), sharedMedia,
+                deletedClipCount);
     }
 
 

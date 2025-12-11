@@ -77,13 +77,14 @@ public class ProjectController {
 
     /**
      * Verwijdert een project en de gelinkte project-media rijen.
-     * Clips blijven bestaan voor hergebruik bij andere projecten of workflows.
+     * Clips die exclusief door het project gebruikt worden gaan mee weg; gedeelde clips blijven.
      *
      * @param projectId te verwijderen project-id.
      * @param ownerId optioneel directe owner-id (fallback voor oudere clients).
      * @param ownerExternalSubject optionele externe subjectreferentie om de owner te bepalen.
      *
      * Side-effects:
+     * - Verwijdert clip-assets en clips voor media die alleen aan dit project hangen.
      * - Verwijdert project-media links en het project zelf.
      *
      * Voorbeeld: DELETE /v1/projects/{projectId}?ownerExternalSubject=auth0|user-123
