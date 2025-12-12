@@ -222,6 +222,7 @@ public class OneClickOrchestrator {
                         platform,
                         "ingest",
                         durationMs,
+                        null,
                         null)
         );
         return created.mediaId();

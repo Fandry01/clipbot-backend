@@ -6,6 +6,7 @@ import com.example.clipbot_backend.dto.media.CreateFromUrlResponse;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -79,7 +80,8 @@ public class MediaService  {
             MediaPlatform platform,
             String source,
             Long durationMs,
-            String objectKeyOverride // ← gebruik dit als caller er eentje meegeeft
+            String objectKeyOverride, // ← gebruik dit als caller er eentje meegeeft
+            SpeakerMode speakerMode
     ) {
         var owner = accountService.getByIdOrThrow(ownerId);
 
@@ -99,6 +101,7 @@ public class MediaService  {
         media.setStatus(MediaStatus.DOWNLOADING);
         // Status die in je CHECK-constraint toegestaan is
         if (durationMs != null && durationMs > 0) media.setDurationMs(durationMs);
+        media.setSpeakerMode(speakerMode != null ? speakerMode : SpeakerMode.SINGLE);
 
         // Kies objectKey:
         // - Als caller er al een gaf: neem die.
@@ -113,7 +116,7 @@ public class MediaService  {
     }
 
     public CreateFromUrlResponse createFromUrl(UUID ownerId, String url, String source) {
-        UUID mediaId = createMediaFromUrl(ownerId, url, MediaPlatform.OTHER, source, null, null);
+        UUID mediaId = createMediaFromUrl(ownerId, url, MediaPlatform.OTHER, source, null, null, null);
         return new CreateFromUrlResponse(mediaId);
     }
 
