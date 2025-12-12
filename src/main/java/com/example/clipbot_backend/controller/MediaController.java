@@ -10,6 +10,7 @@ import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -42,9 +43,10 @@ public class MediaController {
         final String normalizedUrl = (md != null ? md.url() : metadataService.normalizeUrl(request.url()));
         final MediaPlatform platform = (md != null ? md.platform() : metadataService.detectPlatform(request.url()));
         final Long durationMs = (md != null && md.durationSec() != null) ? safeToMillis(md.durationSec()) : null;
+        SpeakerMode speakerMode = request.podcastOrInterview() ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
 
         UUID mediaId = mediaService.createMediaFromUrl(
-                request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride()
+                request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride(), speakerMode
         );
         Media media = mediaService.get(mediaId);
         // Service zet DOWNLOADING; dat moeten we zo teruggeven:

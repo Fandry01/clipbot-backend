@@ -6,10 +6,18 @@ import jakarta.validation.constraints.Size;
 
 import java.util.UUID;
 
+/**
+ * Ingestverzoek voor een mediabestand vanaf een externe URL.
+ * <p>
+ * De boolean {@code podcastOrInterview} wordt door de frontend gezet wanneer het om een
+ * gesprek met meerdere sprekers gaat; de backend gebruikt dit om de multi-speaker
+ * diarization route (GPT-4o) te kiezen.
+ */
 public record MediaFromUrlRequest(
         @NotNull UUID ownerId,
         @NotBlank @Size(max = 2048) String url,
         String source,
-        String objectKeyOverride
+        String objectKeyOverride,
+        boolean podcastOrInterview
 ) {
 }

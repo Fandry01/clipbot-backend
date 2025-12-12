@@ -16,6 +16,7 @@ import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.JobStatus;
 import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,7 +64,8 @@ public class UploadService {
     public UploadCompleteResponse uploadLocal(String ownerExternalSubject,
                                               String objectKey,
                                               MultipartFile file,
-                                              String sourceLabel) throws Exception {
+                                              String sourceLabel,
+                                              boolean podcastOrInterview) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "FILE_EMPTY");
         }
@@ -80,6 +82,7 @@ public class UploadService {
 
         var media = new Media(owner, objectKey);
         media.setSource(sourceLabel == null ? "upload" : sourceLabel.trim().toLowerCase());
+        media.setSpeakerMode(podcastOrInterview ? SpeakerMode.MULTI : SpeakerMode.SINGLE);
         media.setStatus(MediaStatus.REGISTERED);
         mediarepo.saveAndFlush(media);
         Path tmp = null;
