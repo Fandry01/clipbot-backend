@@ -162,6 +162,9 @@ public class Media {
     @Transient
     public boolean isMultiSpeakerEffective() {
         SpeakerMode mode = this.speakerMode != null ? this.speakerMode : SpeakerMode.SINGLE;
+        if (SpeakerMode.AUTO.equals(mode)) {
+            return false;
+        }
         return SpeakerMode.MULTI.equals(mode);
     }
 }
