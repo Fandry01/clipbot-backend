@@ -110,7 +110,7 @@ class OneClickOrchestratorTest {
                 .thenReturn(Optional.empty());
         when(projectService.findByNormalizedUrl(anyString(), anyString())).thenReturn(Optional.empty());
         when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
-        when(mediaService.createMediaFromUrl(any(), any(), any(), anyString(), any(), any())).thenReturn(mediaId);
+        when(mediaService.createMediaFromUrl(any(), anyString(), anyString(), any(), anyString(), any(), any(), any())).thenReturn(mediaId);
         when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
         when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
         when(segmentRepository.countByMediaId(mediaId)).thenReturn(3L);
@@ -168,7 +168,7 @@ class OneClickOrchestratorTest {
 
         assertThat(response.getMediaId()).isEqualTo(mediaId);
         assertThat(response.isCreatedProject()).isTrue();
-        verify(mediaService, never()).createMediaFromUrl(any(), any(), any(), anyString(), any(), any());
+        verify(mediaService, never()).createMediaFromUrl(any(), anyString(), anyString(), any(), anyString(), any(), any(), any());
     }
 
     @Test

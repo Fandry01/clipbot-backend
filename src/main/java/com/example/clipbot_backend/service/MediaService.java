@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
 
 import com.example.clipbot_backend.dto.media.CreateFromUrlResponse;
@@ -76,6 +77,7 @@ public class MediaService  {
     @Transactional
     public UUID createMediaFromUrl(
             UUID ownerId,
+            String ownerExternalSubject,
             String externalUrl,
             MediaPlatform platform,
             String source,
@@ -83,7 +85,7 @@ public class MediaService  {
             String objectKeyOverride, // ← gebruik dit als caller er eentje meegeeft
             SpeakerMode speakerMode
     ) {
-        var owner = accountService.getByIdOrThrow(ownerId);
+        var owner = resolveOwner(ownerId, ownerExternalSubject);
 
         String normalizedSource = normalizeSource(source);
         if (!"url".equals(normalizedSource)) {
@@ -116,8 +118,18 @@ public class MediaService  {
     }
 
     public CreateFromUrlResponse createFromUrl(UUID ownerId, String url, String source) {
-        UUID mediaId = createMediaFromUrl(ownerId, url, MediaPlatform.OTHER, source, null, null, null);
+        UUID mediaId = createMediaFromUrl(ownerId, null, url, MediaPlatform.OTHER, source, null, null, null);
         return new CreateFromUrlResponse(mediaId);
+    }
+
+    private Account resolveOwner(UUID ownerId, String ownerExternalSubject) {
+        if (ownerId != null) {
+            return accountService.getByIdOrThrow(ownerId);
+        }
+        if (ownerExternalSubject != null && !ownerExternalSubject.isBlank()) {
+            return accountService.ensureByExternalSubject(ownerExternalSubject, ownerExternalSubject);
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
     }
 
     private String buildExternalObjectKey(String url, MediaPlatform platform) {

@@ -42,10 +42,12 @@ class MediaServiceTest {
 
         UUID mediaId = service.createMediaFromUrl(
                 ownerId,
+                null,
                 "https://example.com/audio.mp3",
                 MediaPlatform.OTHER,
                 "url",
                 1_000L,
+                null,
                 null,
                 null
         );
@@ -73,10 +75,12 @@ class MediaServiceTest {
 
         UUID mediaId = service.createMediaFromUrl(
                 ownerId,
+                null,
                 "https://example.com/audio.mp3",
                 MediaPlatform.OTHER,
                 "url",
                 1_000L,
+                null,
                 null,
                 SpeakerMode.MULTI
         );
@@ -87,5 +91,36 @@ class MediaServiceTest {
 
         assertThat(mediaId).isNotNull();
         assertThat(persisted.getSpeakerMode()).isEqualTo(SpeakerMode.MULTI);
+    }
+
+    @Test
+    void createFromUrlAllowsExternalSubjectWhenNoOwnerId() {
+        MediaService service = new MediaService(mediaRepository, accountService);
+        Account owner = new Account("demo-user-1", "demo-user-1");
+        when(accountService.ensureByExternalSubject("demo-user-1", "demo-user-1")).thenReturn(owner);
+        when(mediaRepository.save(any(Media.class))).thenAnswer(invocation -> {
+            Media media = invocation.getArgument(0, Media.class);
+            media.setId(UUID.randomUUID());
+            return media;
+        });
+
+        UUID mediaId = service.createMediaFromUrl(
+                null,
+                "demo-user-1",
+                "https://example.com/audio.mp3",
+                MediaPlatform.OTHER,
+                "url",
+                1_000L,
+                null,
+                null
+        );
+
+        ArgumentCaptor<Media> saved = ArgumentCaptor.forClass(Media.class);
+        verify(mediaRepository).save(saved.capture());
+        Media persisted = saved.getValue();
+
+        assertThat(mediaId).isNotNull();
+        assertThat(persisted.getOwner()).isEqualTo(owner);
+        assertThat(persisted.getSpeakerMode()).isEqualTo(SpeakerMode.SINGLE);
     }
 }

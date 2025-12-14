@@ -217,7 +217,9 @@ public class OneClickOrchestrator {
         MediaPlatform platform = metadata != null ? metadata.platform() : MediaPlatform.OTHER;
         Long durationMs = metadata != null && metadata.durationSec() != null ? metadata.durationSec() * 1000 : null;
         CreateFromUrlResponse created = new CreateFromUrlResponse(
-                mediaService.createMediaFromUrl(project.getOwner().getId(),
+                mediaService.createMediaFromUrl(
+                        project.getOwner().getId(),
+                        project.getOwner().getExternalSubject(),
                         metadata != null ? metadata.url() : request.url(),
                         platform,
                         "ingest",

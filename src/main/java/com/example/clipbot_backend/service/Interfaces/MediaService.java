@@ -15,5 +15,12 @@ public interface MediaService {
     Media get(UUID mediaId);
     void setStatus(UUID mediaId, MediaStatus status);
     void setDuration(UUID mediaId, long durationMs);
-    UUID createMediaFromUrl(UUID ownerId, String externalUrl, MediaPlatform platform, String source, Long durationMs, SpeakerMode speakerMode);
+    UUID createMediaFromUrl(UUID ownerId,
+                            String ownerExternalSubject,
+                            String externalUrl,
+                            MediaPlatform platform,
+                            String source,
+                            Long durationMs,
+                            String objectKeyOverride,
+                            SpeakerMode speakerMode);
 }

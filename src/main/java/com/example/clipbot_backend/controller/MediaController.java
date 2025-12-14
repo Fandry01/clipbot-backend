@@ -46,7 +46,14 @@ public class MediaController {
         SpeakerMode speakerMode = request.podcastOrInterview() ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
 
         UUID mediaId = mediaService.createMediaFromUrl(
-                request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride(), speakerMode
+                request.ownerId(),
+                request.ownerExternalSubject(),
+                normalizedUrl,
+                platform,
+                source,
+                durationMs,
+                request.objectKeyOverride(),
+                speakerMode
         );
         Media media = mediaService.get(mediaId);
         // Service zet DOWNLOADING; dat moeten we zo teruggeven:
