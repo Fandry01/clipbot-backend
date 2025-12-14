@@ -52,6 +52,10 @@ public class DetectionService {
                               Integer topN,
                               Boolean enqueueRender) {
         Media media = mediaRepo.findById(mediaId).orElseThrow();
+        if (!transcriptRepo.existsByMediaId(mediaId)) {
+            return jobService.enqueue(media.getId(), JobType.TRANSCRIBE, Map.of());
+        }
+
         Map<String, Object> payload = new LinkedHashMap<>();
         if (lang != null) payload.put("lang", lang);
         if (provider != null) payload.put("provider", provider);
