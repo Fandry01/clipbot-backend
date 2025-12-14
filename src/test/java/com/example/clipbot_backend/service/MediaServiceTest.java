@@ -47,8 +47,6 @@ class MediaServiceTest {
                 MediaPlatform.OTHER,
                 "url",
                 1_000L,
-                null,
-                null,
                 null
         );
 
@@ -80,7 +78,6 @@ class MediaServiceTest {
                 MediaPlatform.OTHER,
                 "url",
                 1_000L,
-                null,
                 null,
                 SpeakerMode.MULTI
         );

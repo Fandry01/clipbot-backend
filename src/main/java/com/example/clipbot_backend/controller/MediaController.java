@@ -35,6 +35,7 @@ public class MediaController {
     @PostMapping("/from-url")
     public MediaFromUrlResponse createFromUrl(@Valid @RequestBody MediaFromUrlRequest request) {
         final String source = (request.source() == null || request.source().isBlank()) ? "url" : request.source();
+        OwnerInput ownerInput = resolveOwner(request);
 
         MetadataResult md = null;
         try { md = metadataService.resolve(request.url()); }
@@ -46,8 +47,8 @@ public class MediaController {
         SpeakerMode speakerMode = request.podcastOrInterview() ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
 
         UUID mediaId = mediaService.createMediaFromUrl(
-                request.ownerId(),
-                request.ownerExternalSubject(),
+                ownerInput.ownerId(),
+                ownerInput.ownerExternalSubject(),
                 normalizedUrl,
                 platform,
                 source,
@@ -101,6 +102,30 @@ public class MediaController {
             return Long.MAX_VALUE;
         }
     }
+
+    private OwnerInput resolveOwner(MediaFromUrlRequest request) {
+        UUID ownerId = tryParseUuid(request.ownerId());
+        String externalSubject = request.ownerExternalSubject();
+
+        if ((externalSubject == null || externalSubject.isBlank()) && ownerId == null && request.ownerId() != null && !request.ownerId().isBlank()) {
+            externalSubject = request.ownerId();
+        }
+
+        return new OwnerInput(ownerId, externalSubject);
+    }
+
+    private UUID tryParseUuid(String rawOwnerId) {
+        if (rawOwnerId == null || rawOwnerId.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(rawOwnerId);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private record OwnerInput(UUID ownerId, String ownerExternalSubject) {}
 
 
 }
