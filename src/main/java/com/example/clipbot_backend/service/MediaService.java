@@ -1,11 +1,13 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
 
 import com.example.clipbot_backend.dto.media.CreateFromUrlResponse;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -75,13 +77,15 @@ public class MediaService  {
     @Transactional
     public UUID createMediaFromUrl(
             UUID ownerId,
+            String ownerExternalSubject,
             String externalUrl,
             MediaPlatform platform,
             String source,
             Long durationMs,
-            String objectKeyOverride // ← gebruik dit als caller er eentje meegeeft
+            String objectKeyOverride, // ← gebruik dit als caller er eentje meegeeft
+            SpeakerMode speakerMode
     ) {
-        var owner = accountService.getByIdOrThrow(ownerId);
+        var owner = resolveOwner(ownerId, ownerExternalSubject);
 
         String normalizedSource = normalizeSource(source);
         if (!"url".equals(normalizedSource)) {
@@ -99,6 +103,7 @@ public class MediaService  {
         media.setStatus(MediaStatus.DOWNLOADING);
         // Status die in je CHECK-constraint toegestaan is
         if (durationMs != null && durationMs > 0) media.setDurationMs(durationMs);
+        media.setSpeakerMode(speakerMode != null ? speakerMode : SpeakerMode.SINGLE);
 
         // Kies objectKey:
         // - Als caller er al een gaf: neem die.
@@ -113,8 +118,18 @@ public class MediaService  {
     }
 
     public CreateFromUrlResponse createFromUrl(UUID ownerId, String url, String source) {
-        UUID mediaId = createMediaFromUrl(ownerId, url, MediaPlatform.OTHER, source, null, null);
+        UUID mediaId = createMediaFromUrl(ownerId, null, url, MediaPlatform.OTHER, source, null, null, null);
         return new CreateFromUrlResponse(mediaId);
+    }
+
+    private Account resolveOwner(UUID ownerId, String ownerExternalSubject) {
+        if (ownerId != null) {
+            return accountService.getByIdOrThrow(ownerId);
+        }
+        if (ownerExternalSubject != null && !ownerExternalSubject.isBlank()) {
+            return accountService.ensureByExternalSubject(ownerExternalSubject, ownerExternalSubject);
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
     }
 
     private String buildExternalObjectKey(String url, MediaPlatform platform) {
