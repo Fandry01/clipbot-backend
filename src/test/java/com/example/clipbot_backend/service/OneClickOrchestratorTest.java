@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -99,6 +100,7 @@ class OneClickOrchestratorTest {
                 "https://youtube.com/watch?v=abc",
                 null,
                 "My import",
+                true,
                 new OneClickRequest.Options("auto", "fasterwhisper", 0.3, 6, true),
                 "idem-1",
                 null
@@ -126,6 +128,7 @@ class OneClickOrchestratorTest {
         assertThat(response.getThumbnailSource()).isEqualTo("YOUTUBE");
 
         verify(projectService).patch(projectId, org.mockito.ArgumentMatchers.any());
+        verify(mediaService).createMediaFromUrl(any(), anyString(), anyString(), any(), anyString(), any(), any(), eq(com.example.clipbot_backend.util.SpeakerMode.MULTI));
     }
 
     @Test
@@ -148,6 +151,7 @@ class OneClickOrchestratorTest {
                 owner.getExternalSubject(),
                 null,
                 mediaId,
+                null,
                 null,
                 new OneClickRequest.Options(null, null, null, null, null),
                 "idem-2",
@@ -192,7 +196,7 @@ class OneClickOrchestratorTest {
             throw new RuntimeException(e);
         }
 
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com", null, null, null, "idem-3", null);
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com", null, null, null, null, "idem-3", null);
 
         when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey("demo", "idem-3"))
                 .thenReturn(Optional.of(entity));
@@ -205,7 +209,7 @@ class OneClickOrchestratorTest {
 
     @Test
     void orchestrateValidatesExclusiveInputs() {
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com", UUID.randomUUID(), null, null, "idem-4", null);
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com", UUID.randomUUID(), null, null, null, "idem-4", null);
 
         assertThatThrownBy(() -> orchestrator.orchestrate(request))
                 .isInstanceOf(ResponseStatusException.class)
@@ -223,7 +227,7 @@ class OneClickOrchestratorTest {
         when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey("demo", "idem-5"))
                 .thenReturn(Optional.of(existing));
 
-        OneClickRequest request = new OneClickRequest("demo", "https://example.com/b", null, "Title", null, "idem-5", null);
+        OneClickRequest request = new OneClickRequest("demo", "https://example.com/b", null, "Title", null, null, "idem-5", null);
 
         assertThatThrownBy(() -> orchestrator.orchestrate(request))
                 .isInstanceOf(ResponseStatusException.class)

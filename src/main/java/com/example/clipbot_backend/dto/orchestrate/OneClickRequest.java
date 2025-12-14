@@ -12,6 +12,10 @@ public record OneClickRequest(
         String url,
         UUID mediaId,
         String title,
+        /**
+         * Hint from the frontend that the content is a podcast or interview and should use multi-speaker diarization.
+         */
+        Boolean podcastOrInterview,
         Options opts,
         @NotBlank String idempotencyKey,
         UUID projectId

@@ -18,6 +18,7 @@ import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import com.example.clipbot_backend.util.ThumbnailSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -216,6 +217,7 @@ public class OneClickOrchestrator {
 
         MediaPlatform platform = metadata != null ? metadata.platform() : MediaPlatform.OTHER;
         Long durationMs = metadata != null && metadata.durationSec() != null ? metadata.durationSec() * 1000 : null;
+        boolean podcastOrInterview = request.podcastOrInterview() != null && request.podcastOrInterview();
         CreateFromUrlResponse created = new CreateFromUrlResponse(
                 mediaService.createMediaFromUrl(
                         project.getOwner().getId(),
@@ -225,7 +227,7 @@ public class OneClickOrchestrator {
                         "ingest",
                         durationMs,
                         null,
-                        null)
+                        podcastOrInterview ? SpeakerMode.MULTI : SpeakerMode.SINGLE)
         );
         return created.mediaId();
     }
@@ -358,6 +360,7 @@ public class OneClickOrchestrator {
         builder.append("|mediaId:").append(request.mediaId() == null ? "" : request.mediaId());
         builder.append("|projectId:").append(request.projectId() == null ? "" : request.projectId());
         builder.append("|title:").append(request.title() == null ? "" : request.title().trim());
+        builder.append("|podcastOrInterview:").append(request.podcastOrInterview() == null ? "" : request.podcastOrInterview());
         OneClickRequest.Options opts = request.opts();
         if (opts != null) {
             builder.append("|lang:").append(opts.lang() == null ? "" : opts.lang());
