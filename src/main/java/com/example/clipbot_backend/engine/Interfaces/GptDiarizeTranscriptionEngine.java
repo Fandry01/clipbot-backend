@@ -3,12 +3,18 @@ package com.example.clipbot_backend.engine.Interfaces;
 import com.example.clipbot_backend.config.OpenAIAudioProperties;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +26,7 @@ import java.util.Map;
 @Service
 @Qualifier("gptDiarizeEngine")
 public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
+    private static final Logger log = LoggerFactory.getLogger(GptDiarizeTranscriptionEngine.class);
     private final StorageService storage;
     private final WebClient openAiClient;
     private final OpenAIAudioProperties props;
@@ -37,18 +44,34 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
 
         var form = new LinkedMultiValueMap<String, Object>();
         form.add("file", new FileSystemResource(input));
-        form.add("model", "gpt-4o-transcribe-diarize");
-        form.add("response_format", "diarized_json");
+        form.add("model", props.getModel());
+        form.add("response_format", "verbose_json");
+        form.add("diarization", true);
+        form.add("timestamp_granularities[]", "segment");
+        form.add("timestamp_granularities[]", "word");
         if (request.langHint() != null && !request.langHint().isBlank()) {
             form.add("language", request.langHint());
         }
 
-        String json = openAiClient.post()
+        ResponseWithStatus response = openAiClient.post()
                 .uri("/v1/audio/transcriptions")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(BodyInserters.fromMultipartData(form))
-                .retrieve()
-                .bodyToMono(String.class)
+                .exchangeToMono(this::deserializeResponse)
                 .block();
+
+        if (response == null) {
+            throw new IllegalStateException("OpenAI transcription returned no response body for objectKey=" + request.objectKey());
+        }
+
+        if (!response.status().is2xxSuccessful()) {
+            log.error("OpenAI transcription failed status={} mediaId={} objectKey={} body={}",
+                    response.status().value(), request.mediaId(), request.objectKey(), response.body());
+            throw new IllegalStateException("OpenAI transcription failed: status=" + response.status().value()
+                    + " body=" + response.body());
+        }
+
+        String json = response.body();
 
         var root = new ObjectMapper().readTree(json);
         String text = root.path("text").asText("");
@@ -67,10 +90,28 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
         }
 
         Map<String,Object> meta = new LinkedHashMap<>();
-        meta.put("schema", "diarized_json");
+        meta.put("schema", "verbose_json");
         meta.put("segments", segments);
-        meta.put("providerModel", "gpt-4o-transcribe-diarize");
+        meta.put("providerModel", props.getModel());
+        meta.put("diarization", true);
+        meta.put("timestampGranularities", List.of("segment", "word"));
 
         return new Result(text, List.of(), lang, "GPT_DIARIZE", meta);
     }
+
+    private Mono<ResponseWithStatus> deserializeResponse(ClientResponse clientResponse) {
+        return clientResponse.bodyToMono(String.class)
+                .defaultIfEmpty("")
+                .map(body -> new ResponseWithStatus(clientResponse.statusCode(), truncateBody(body)));
+    }
+
+    private String truncateBody(String body) {
+        int max = 2_000;
+        if (body == null) {
+            return "";
+        }
+        return body.length() > max ? body.substring(0, max) + "..." : body;
+    }
+
+    private record ResponseWithStatus(HttpStatus status, String body) {}
 }
