@@ -4,7 +4,9 @@ import com.example.clipbot_backend.dto.web.MediaCreateRequest;
 import com.example.clipbot_backend.dto.web.MediaFromUrlRequest;
 import com.example.clipbot_backend.dto.web.MediaFromUrlResponse;
 import com.example.clipbot_backend.dto.web.MediaResponse;
+import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.MediaService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
@@ -26,10 +28,12 @@ import java.util.UUID;
 public class MediaController {
     private final MediaService mediaService;
     private final MetadataService metadataService;
+    private final AccountService accountService;
 
-    public MediaController(MediaService mediaService, MetadataService metadataService) {
+    public MediaController(MediaService mediaService, MetadataService metadataService, AccountService accountService) {
         this.mediaService = mediaService;
         this.metadataService = metadataService;
+        this.accountService = accountService;
     }
 
     @PostMapping("/from-url")
@@ -45,13 +49,14 @@ public class MediaController {
         final Long durationMs = (md != null && md.durationSec() != null) ? safeToMillis(md.durationSec()) : null;
 
         SpeakerMode speakerMode = Boolean.TRUE.equals(request.podcastOrInterview()) ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
+        Account owner = resolveOwner(request);
         if (SpeakerMode.MULTI.equals(speakerMode)) {
             org.slf4j.LoggerFactory.getLogger(MediaController.class)
-                    .info("INGEST from-url podcastOrInterview=true speakerMode=MULTI ownerId={} url={}", request.ownerId(), normalizedUrl);
+                    .info("INGEST from-url podcastOrInterview=true speakerMode=MULTI ownerId={} url={}", owner.getId(), normalizedUrl);
         }
 
         UUID mediaId = mediaService.createMediaFromUrl(
-                request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride(), speakerMode
+                owner.getId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride(), speakerMode
         );
         Media media = mediaService.get(mediaId);
         // Service zet DOWNLOADING; dat moeten we zo teruggeven:
@@ -98,6 +103,16 @@ public class MediaController {
         } catch (ArithmeticException e) {
             return Long.MAX_VALUE;
         }
+    }
+
+    private Account resolveOwner(MediaFromUrlRequest request) {
+        if (request.ownerId() != null) {
+            return accountService.getByIdOrThrow(request.ownerId());
+        }
+        if (request.ownerExternalSubject() != null && !request.ownerExternalSubject().isBlank()) {
+            return accountService.getByExternalSubjectOrThrow(request.ownerExternalSubject());
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
     }
 
 
