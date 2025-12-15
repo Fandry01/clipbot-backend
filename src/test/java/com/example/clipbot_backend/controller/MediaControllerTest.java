@@ -119,4 +119,22 @@ class MediaControllerTest {
         verify(accountService).getByExternalSubjectOrThrow(externalSubject);
         verify(mediaService).createMediaFromUrl(eq(ownerId), eq(url), eq(MediaPlatform.OTHER), eq("url"), any(), any(), any());
     }
+
+    @Test
+    void createFromUrlRejectsConflictingOwnerInputs() throws Exception {
+        String ownerIdRaw = "demo-user-1";
+        String externalSubject = "other-user";
+        String url = "https://example.com/audio.mp4";
+
+        String body = objectMapper.writeValueAsString(Map.of(
+                "ownerId", ownerIdRaw,
+                "ownerExternalSubject", externalSubject,
+                "url", url
+        ));
+
+        mockMvc.perform(post("/v1/media/from-url")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
 }

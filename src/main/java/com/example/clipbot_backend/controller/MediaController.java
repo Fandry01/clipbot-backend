@@ -26,6 +26,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/v1/media")
 public class MediaController {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(MediaController.class);
     private final MediaService mediaService;
     private final MetadataService metadataService;
     private final AccountService accountService;
@@ -51,8 +52,7 @@ public class MediaController {
         SpeakerMode speakerMode = Boolean.TRUE.equals(request.podcastOrInterview()) ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
         Account owner = resolveOwner(request);
         if (SpeakerMode.MULTI.equals(speakerMode)) {
-            org.slf4j.LoggerFactory.getLogger(MediaController.class)
-                    .info("INGEST from-url podcastOrInterview=true speakerMode=MULTI ownerId={} url={}", owner.getId(), normalizedUrl);
+            LOGGER.info("INGEST from-url podcastOrInterview=true speakerMode=MULTI ownerId={} url={}", owner.getId(), normalizedUrl);
         }
 
         UUID mediaId = mediaService.createMediaFromUrl(
@@ -120,6 +120,7 @@ public class MediaController {
                 if (ownerExternalSubject != null && !ownerIdRaw.equals(ownerExternalSubject)) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_CONFLICT");
                 }
+                LOGGER.debug("OwnerId '{}' is not a UUID; resolving as externalSubject", ownerIdRaw);
                 return accountService.getByExternalSubjectOrThrow(ownerIdRaw);
             }
         }
@@ -132,7 +133,7 @@ public class MediaController {
     }
 
     private String normalize(String value) {
-        return (value == null || value.isBlank()) ? null : value;
+        return (value == null) ? null : value.trim().isBlank() ? null : value.trim();
     }
 
 

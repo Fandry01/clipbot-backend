@@ -24,6 +24,6 @@ public record MediaFromUrlRequest(
     }
 
     private boolean hasText(String value) {
-        return value != null && !value.isBlank();
+        return value != null && !value.trim().isBlank();
     }
 }
