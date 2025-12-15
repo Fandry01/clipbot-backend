@@ -223,7 +223,8 @@ public class OneClickOrchestrator {
                         platform,
                         "ingest",
                         durationMs,
-                        null)
+                        null,
+                        SpeakerMode.SINGLE)
         );
         return created.mediaId();
     }
