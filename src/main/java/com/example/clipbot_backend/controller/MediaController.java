@@ -106,13 +106,33 @@ public class MediaController {
     }
 
     private Account resolveOwner(MediaFromUrlRequest request) {
-        if (request.ownerId() != null) {
-            return accountService.getByIdOrThrow(request.ownerId());
+        String ownerIdRaw = normalize(request.ownerId());
+        String ownerExternalSubject = normalize(request.ownerExternalSubject());
+
+        if (ownerIdRaw != null) {
+            try {
+                UUID ownerId = UUID.fromString(ownerIdRaw);
+                if (ownerExternalSubject != null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_CONFLICT");
+                }
+                return accountService.getByIdOrThrow(ownerId);
+            } catch (IllegalArgumentException ex) {
+                if (ownerExternalSubject != null && !ownerIdRaw.equals(ownerExternalSubject)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_CONFLICT");
+                }
+                return accountService.getByExternalSubjectOrThrow(ownerIdRaw);
+            }
         }
-        if (request.ownerExternalSubject() != null && !request.ownerExternalSubject().isBlank()) {
-            return accountService.getByExternalSubjectOrThrow(request.ownerExternalSubject());
+
+        if (ownerExternalSubject != null) {
+            return accountService.getByExternalSubjectOrThrow(ownerExternalSubject);
         }
+
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
+    }
+
+    private String normalize(String value) {
+        return (value == null || value.isBlank()) ? null : value;
     }
 
 
