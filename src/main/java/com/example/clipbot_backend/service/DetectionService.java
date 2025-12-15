@@ -128,7 +128,8 @@ public class DetectionService {
                     p.minDurationMs(), p.maxDurationMs(), p.maxCandidates(),
                     p.silenceNoiseDb(), p.silenceMinDurSec(), p.snapThresholdMs(),
                     p.targetLenSec(), p.lenSigmaSec(),
-                    opts.sceneThreshold(), p.snapSceneMs(), p.sceneAlignBonus()
+                    opts.sceneThreshold(), p.snapSceneMs(), p.sceneAlignBonus(),
+                    p.speakerTurnsEnabled()
             );
         }
         return p;

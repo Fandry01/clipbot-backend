@@ -18,6 +18,7 @@ import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import com.example.clipbot_backend.util.ThumbnailSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

@@ -75,7 +75,8 @@ public class DetectWorkflow {
                     media.getId());
 
             Path srcPath = requireRaw(media);
-            DetectionParams params = buildParams(payload);
+            DetectionParams params = buildParams(payload).withSpeakerTurnsEnabled(media.isMultiSpeakerEffective());
+            LOGGER.debug("DETECT params speakerTurnsEnabled={} media={}", params.speakerTurnsEnabled(), media.getId());
             var detected = detection.detect(srcPath, tr, params);
 
             var refined = refineWithWordBounds(srcPath, detected, tr);
@@ -215,7 +216,8 @@ public class DetectWorkflow {
                 minMs, maxMs, maxCand,
                 silDb, silMin, snapMs,
                 target, sigma,
-                sceneT, snapSc, scBonus
+                sceneT, snapSc, scBonus,
+                false
         );
     }
 

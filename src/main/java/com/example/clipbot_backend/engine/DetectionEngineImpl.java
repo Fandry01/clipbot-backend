@@ -4,12 +4,14 @@ import com.example.clipbot_backend.dto.DetectionParams;
 import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.dto.SentenceSpan;
 import com.example.clipbot_backend.dto.SilenceEvent;
+import com.example.clipbot_backend.dto.SpeakerTurn;
 import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.service.ClipAssembler;
 import com.example.clipbot_backend.service.Interfaces.SilenceDetector;
 import com.example.clipbot_backend.service.WorkerService;
+import com.example.clipbot_backend.util.HeuristicScorer;
 import com.example.clipbot_backend.util.TranscriptUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +39,10 @@ public class DetectionEngineImpl implements DetectionEngine {
     public List<SegmentDTO> detect(Path mediaFile, Transcript transcript, DetectionParams params) {
         if (transcript == null) return List.of();
         List<WordsParser.WordAdapter> words = WordsParser.extract(transcript);
+        List<SpeakerTurn> speakerTurns = WordsParser.extractSpeakerTurns(transcript);
+        HeuristicScorer.SpeakerContext speakerContext = new HeuristicScorer.SpeakerContext(speakerTurns, params.speakerTurnsEnabled());
         LOGGER.info("DETECT extracted words={}, mediaFileExists={}", words.size(), Files.exists(mediaFile));
+        LOGGER.debug("DETECT diarization segments={} speakerHeuristicsEnabled={}", speakerTurns.size(), params.speakerTurnsEnabled());
 
         if (words.isEmpty()) return List.of();
         if (mediaFile == null || !Files.exists(mediaFile))
@@ -60,7 +65,8 @@ public class DetectionEngineImpl implements DetectionEngine {
                 sentences, silences,
                 params.minDurationMs(), params.maxDurationMs(), params.snapThresholdMs(),
                 params.targetLenSec(), params.lenSigmaSec(),
-                params.maxCandidates()
+                params.maxCandidates(),
+                speakerContext
         );
         if (wins.isEmpty()) {
             wins = assembler.windowsTextOnly(
@@ -69,7 +75,8 @@ public class DetectionEngineImpl implements DetectionEngine {
                     params.maxDurationMs(),        // maxMs (long)
                     params.targetLenSec(),         // double
                     params.lenSigmaSec(),          // double
-                    Math.max(params.maxCandidates(), 12) // int
+                    Math.max(params.maxCandidates(), 12), // int
+                    speakerContext
             );
             LOGGER.info("DETECT fallback text-only windows={}", wins.size());
         }

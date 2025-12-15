@@ -10,6 +10,7 @@ public record MediaFromUrlRequest(
         @NotNull UUID ownerId,
         @NotBlank @Size(max = 2048) String url,
         String source,
-        String objectKeyOverride
+        String objectKeyOverride,
+        Boolean podcastOrInterview
 ) {
 }

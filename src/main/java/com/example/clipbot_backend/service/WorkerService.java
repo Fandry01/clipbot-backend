@@ -178,13 +178,31 @@ void handleTranscribe(Job job) {
         // 3) Transcribe
         boolean isMulti = media.isMultiSpeakerEffective();
         TranscriptionEngine engine = isMulti ? gptDiarizeEngine : fasterWhisperEngine;
+        String selectedEngine = isMulti ? "GPT_DIARIZE" : "FASTER_WHISPER";
+        LOGGER.info("TRANSCRIBE selectEngine={} mediaId={} objectKey={}", selectedEngine, mediaId, key);
 
         var req = new TranscriptionEngine.Request(
                 media.getId(),
                 key,          // laat engine zelf resolveRaw(key) doen (liefst via StorageService-injectie)
                 null          // extra opties (bijv. target lang) optioneel
         );
-        var res = engine.transcribe(req);
+        TranscriptionEngine.Result res;
+        try {
+            res = engine.transcribe(req);
+        } catch (Exception primaryEx) {
+            if (isMulti) {
+                LOGGER.warn("TRANSCRIBE primary GPT diarize failed mediaId={} reason={} – falling back to FasterWhisper", mediaId, primaryEx.toString());
+                try {
+                    res = fasterWhisperEngine.transcribe(req);
+                    selectedEngine = "FASTER_WHISPER";
+                } catch (Exception fallbackEx) {
+                    primaryEx.addSuppressed(fallbackEx);
+                    throw primaryEx;
+                }
+            } else {
+                throw primaryEx;
+            }
+        }
 
         // 4) Transcript upsert
         transcriptService.upsert(media.getId(), res);
