@@ -5,17 +5,20 @@ import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
+import com.example.clipbot_backend.dto.FwVerboseResponse;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
-import com.example.clipbot_backend.service.Interfaces.TranscriptService;
+import com.example.clipbot_backend.service.FasterWhisperClient;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.RecommendationService;
+import com.example.clipbot_backend.service.TranscriptService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,17 +41,18 @@ public class DetectWorkflow {
     private final SegmentRepository segmentRepo;
     private final StorageService storage;
     private final DetectionEngine detection;
-    private final TranscriptionService transcriptService;
+    private final TranscriptService transcriptService;
     private final TranscriptionEngine gptDiarizeEngine;
     private final TranscriptionEngine fasterWhisperEngine;
     private final AudioWindowService audioWindowService;
+    private final FasterWhisperClient fastWhisperClient;
     private final UrlDownloader urlDownloader;
     private final RecommendationService recommendationService;
     private final ThumbnailService thumbnailService;
 
     private static final int DEFAULT_TOP_N = 6;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptionService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService) {
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, FasterWhisperClient fastWhisperClient, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
@@ -58,6 +62,7 @@ public class DetectWorkflow {
         this.gptDiarizeEngine = gptDiarizeEngine;
         this.fasterWhisperEngine = fasterWhisperEngine;
         this.audioWindowService = audioWindowService;
+        this.fastWhisperClient = fastWhisperClient;
         this.urlDownloader = urlDownloader;
         this.recommendationService = recommendationService;
         this.thumbnailService = thumbnailService;
