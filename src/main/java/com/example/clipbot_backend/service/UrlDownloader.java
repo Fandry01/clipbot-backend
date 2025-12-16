@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.StringJoiner;
 
 @Component
 public class UrlDownloader {
@@ -87,7 +88,7 @@ public class UrlDownloader {
     private void downloadYoutubeMp4(String url, Path mp4Target) throws Exception {
         Files.createDirectories(mp4Target.getParent());
         // Kies h264 + beste audio, ≤1080p; forceer mp4 container.
-        Process p = new ProcessBuilder(
+        ProcessResult result = runProcess(List.of(
                 ytdlp,
                 "--no-progress", "--newline",
                 "-S", "res:1080,codec:h264",
@@ -96,12 +97,10 @@ public class UrlDownloader {
                 "--no-playlist",
                 "-o", mp4Target.toString(),
                 url
-        ).redirectErrorStream(true).start();
+        ));
 
-        try (var in = p.getInputStream()) { in.transferTo(System.out); }
-        int code = p.waitFor();
-        if (code != 0 || !Files.exists(mp4Target)) {
-            throw new IllegalStateException("yt-dlp exit=" + code + " output missing: " + mp4Target);
+        if (result.code() != 0 || !Files.exists(mp4Target)) {
+            throw new IllegalStateException("yt-dlp exit=" + result.code() + " output missing: " + mp4Target + " log=" + truncateLog(result.output()));
         }
     }
     private void extractAudioM4a(Path mp4, Path m4a) throws Exception {
@@ -147,6 +146,33 @@ public class UrlDownloader {
         try (var in = p.getInputStream()) { in.transferTo(System.out); }
         return p.waitFor();
     }
+
+    protected ProcessResult runProcess(List<String> cmd) throws IOException, InterruptedException {
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        StringJoiner joiner = new StringJoiner(System.lineSeparator());
+        try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println(line);
+                joiner.add(line);
+            }
+        }
+        int code = p.waitFor();
+        return new ProcessResult(code, joiner.toString());
+    }
+
+    private String truncateLog(String output) {
+        final int max = 800;
+        if (output == null) {
+            return "<no output>";
+        }
+        if (output.length() <= max) {
+            return output;
+        }
+        return output.substring(0, max) + "...";
+    }
+
+    protected record ProcessResult(int code, String output) { }
 
 
     private void downloadWithHttp(String url, Path target) throws Exception {
