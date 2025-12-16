@@ -82,8 +82,8 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                     .bodyToMono(String.class)
                     .doOnNext(body -> {
                         if (logDiarize) {
-                            LOGGER.debug("OpenAI diarize raw response mediaId={} length={} snippet={}", request.mediaId(),
-                                    body == null ? 0 : body.length(), truncate(body, 5000));
+                            LOGGER.info("OpenAI diarize raw response mediaId={} length={} snippet={}", request.mediaId(),
+                                    body == null ? 0 : body.length(), truncate(body, 2000));
                         }
                     })
                     .map(body -> parseJson(body, request))
@@ -332,18 +332,18 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             try {
                 List<String> fields = new ArrayList<>();
                 root.fieldNames().forEachRemaining(fields::add);
-                LOGGER.debug("OpenAI diarize parsed root mediaId={} fields={}", request.mediaId(), fields);
+                LOGGER.info("OpenAI diarize parsed root mediaId={} fields={}", request.mediaId(), fields);
 
                 JsonNode segments = extractDiarizeSegments(root, request);
                 if (segments != null && segments.isArray() && segments.size() > 0) {
                     JsonNode first = segments.get(0);
                     String serialized = om.writeValueAsString(first);
-                    LOGGER.debug("OpenAI diarize first segment mediaId={} snippet={}", request.mediaId(), truncate(serialized, 2000));
+                    LOGGER.info("OpenAI diarize first segment mediaId={} snippet={}", request.mediaId(), truncate(serialized, 2000));
                 } else {
-                    LOGGER.debug("OpenAI diarize segments missing or empty mediaId={}", request.mediaId());
+                    LOGGER.info("OpenAI diarize segments missing or empty mediaId={}", request.mediaId());
                 }
             } catch (Exception e) {
-                LOGGER.debug("OpenAI diarize logging failed mediaId={} error={}", request.mediaId(), e.toString());
+                LOGGER.info("OpenAI diarize logging failed mediaId={} error={}", request.mediaId(), e.toString());
             }
         }
 
