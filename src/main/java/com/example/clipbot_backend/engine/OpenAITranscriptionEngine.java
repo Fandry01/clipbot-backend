@@ -124,7 +124,7 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             }
 
             if (diarize && words.isEmpty() && hasSegments) {
-                words.addAll(synthesizeWordsFromSegments(root.get("segments")));
+                words.addAll(synthesizeWordsFromSegments(root.get("segments"), request));
             }
 
             if (text == null && diarize && hasSegments) {
@@ -154,31 +154,50 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
         }
 
-        private List<TranscriptionEngine.Word> synthesizeWordsFromSegments(JsonNode segments) {
+        private List<TranscriptionEngine.Word> synthesizeWordsFromSegments(JsonNode segments, Request request) {
             List<TranscriptionEngine.Word> synthetic = new ArrayList<>();
             for (var seg : segments) {
                 String segText = seg.path("text").asText("").trim();
-                if (segText.isBlank()) continue;
+                double start = seg.path("start").asDouble(Double.NaN);
+                double end = seg.path("end").asDouble(Double.NaN);
+
+                if (segText.isBlank()) {
+                    LOGGER.warn("OpenAI diarize segment missing text mediaId={} start={} end={}",
+                            request.mediaId(), start, end);
+                    continue;
+                }
 
                 List<String> tokens = Arrays.stream(segText.split("\\s+"))
                         .filter(token -> !token.isBlank())
                         .toList();
-                if (tokens.isEmpty()) continue;
 
-                double start = seg.path("start").asDouble(Double.NaN);
-                double end = seg.path("end").asDouble(Double.NaN);
+                if (tokens.isEmpty()) {
+                    LOGGER.warn("OpenAI diarize segment produced no tokens mediaId={} text='{}'", request.mediaId(), segText);
+                    continue;
+                }
+
                 long segStartMs = Double.isFinite(start) ? Math.round(start * 1000.0) : 0L;
                 long segEndMs = Double.isFinite(end) ? Math.round(end * 1000.0) : segStartMs + DEFAULT_SYNTHETIC_WORD_MS * tokens.size();
                 long durationMs = Math.max(segEndMs - segStartMs, DEFAULT_SYNTHETIC_WORD_MS * tokens.size());
                 double step = durationMs / (double) tokens.size();
 
+                int segmentWords = 0;
                 for (int i = 0; i < tokens.size(); i++) {
                     long tokenStart = segStartMs + Math.round(i * step);
                     long tokenEnd = segStartMs + Math.round((i + 1) * step);
                     if (tokenEnd <= tokenStart) {
                         tokenEnd = tokenStart + DEFAULT_SYNTHETIC_WORD_MS;
                     }
-                    synthetic.add(new TranscriptionEngine.Word(tokenStart, tokenEnd, tokens.get(i)));
+                    TranscriptionEngine.Word word = new TranscriptionEngine.Word(tokenStart, tokenEnd, tokens.get(i));
+                    synthetic.add(word);
+                    segmentWords++;
+                    LOGGER.debug("OpenAI diarize synthetic word mediaId={} token='{}' startMs={} endMs={}",
+                            request.mediaId(), word.text(), word.startMs(), word.endMs());
+                }
+
+                if (segmentWords == 0) {
+                    LOGGER.warn("OpenAI diarize segment yielded no words mediaId={} start={} end={} text='{}'", request.mediaId(),
+                            start, end, segText);
                 }
             }
             return synthetic;

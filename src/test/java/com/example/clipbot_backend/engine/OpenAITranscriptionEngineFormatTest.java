@@ -3,6 +3,10 @@ package com.example.clipbot_backend.engine;
 import com.example.clipbot_backend.config.OpenAIAudioProperties;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -181,5 +185,51 @@ class OpenAITranscriptionEngineFormatTest {
                 .isSorted();
         assertThat(result.meta()).containsEntry("provider", "openai");
         assertThat((List<?>) result.meta().get("segments")).hasSize(2);
+    }
+
+    @Test
+    void skipsEmptySegmentsAndLogsWarningsWhileGeneratingWords() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        Mockito.when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        props.setDiarize(true);
+
+        ExchangeFunction exchangeFunction = request -> {
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"segments\":[{\"speaker\":\"A\",\"text\":\"\",\"start\":0.0,\"end\":1.0},{\"speaker\":\"B\",\"text\":\"Hello world\",\"start\":1.0,\"end\":3.0}]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        logger.addAppender(listAppender);
+
+        try {
+            TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+            TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+            assertThat(result.words()).isNotEmpty();
+            assertThat(result.words())
+                    .extracting(TranscriptionEngine.Word::startMs)
+                    .isSorted();
+
+            List<String> warnMessages = listAppender.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+
+            assertThat(warnMessages).anyMatch(msg -> msg.contains("segment missing text"));
+        } finally {
+            logger.detachAppender(listAppender);
+            listAppender.stop();
+        }
     }
 }
