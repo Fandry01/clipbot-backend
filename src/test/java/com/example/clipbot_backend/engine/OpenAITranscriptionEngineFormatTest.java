@@ -91,7 +91,11 @@ class OpenAITranscriptionEngineFormatTest {
         engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
 
         String body = bodyRef.get();
-        assertThat(body).contains("name=\"response_format\"").contains("diarized_json");
+        assertThat(body)
+                .contains("name=\"response_format\"")
+                .contains("diarized_json")
+                .contains("name=\"chunking_strategy\"")
+                .contains("auto");
         assertThat(body).doesNotContain("timestamp_granularities");
     }
 

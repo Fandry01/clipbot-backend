@@ -46,6 +46,7 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
         form.add("file", new FileSystemResource(input));
         form.add("model", props.getModel());
         form.add("response_format", "diarized_json");
+        form.add("chunking_strategy", "auto");
         form.add("diarization", true);
         if (request.langHint() != null && !request.langHint().isBlank()) {
             form.add("language", request.langHint());

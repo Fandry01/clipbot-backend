@@ -60,6 +60,7 @@ import java.util.*;
 
             if (diarize) {
                 form.add("response_format", "diarized_json");
+                form.add("chunking_strategy", "auto");
             } else {
                 form.add("response_format", "verbose_json");
                 form.add("timestamp_granularities[]", "word");

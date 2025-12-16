@@ -77,6 +77,8 @@ class GptDiarizeTranscriptionEngineTest {
             String body = mockRequest.getBodyAsString().block();
             assertThat(body).contains("response_format")
                     .contains("diarized_json")
+                    .contains("chunking_strategy")
+                    .contains("auto")
                     .contains("diarization")
                     .doesNotContain("timestamp_granularities[]")
                     .doesNotContain("word");
