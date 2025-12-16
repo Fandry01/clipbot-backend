@@ -232,4 +232,34 @@ class OpenAITranscriptionEngineFormatTest {
             listAppender.stop();
         }
     }
+
+    @Test
+    void parsesAlternativeDiarizedFieldsIntoWords() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        Mockito.when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        props.setDiarize(true);
+
+        ExchangeFunction exchangeFunction = request -> {
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"utterances\":[{\"speaker\":\"spk1\",\"transcript\":\"Hello world\",\"start_time\":0,\"end_time\":12000},{\"speaker\":\"spk2\",\"utterance\":\"Second part here\",\"start_time\":15000,\"end_time\":30000}]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        assertThat(result.words()).isNotEmpty();
+        assertThat(result.words())
+                .extracting(TranscriptionEngine.Word::startMs)
+                .isSorted();
+        assertThat(result.meta()).containsKey("segments");
+    }
 }

@@ -104,13 +104,16 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             String lang = optText(root, "language"); // kan ontbreken
             List<TranscriptionEngine.Word> words = new ArrayList<>();
 
-            boolean hasSegments = root.has("segments") && root.get("segments").isArray();
+            JsonNode diarizeSegments = diarize ? extractDiarizeSegments(root, request) : null;
+            JsonNode fallbackSegments = root.has("segments") && root.get("segments").isArray() ? root.get("segments") : null;
+            JsonNode segmentsNode = diarize ? diarizeSegments : fallbackSegments;
+            boolean hasSegments = segmentsNode != null && segmentsNode.isArray();
 
             // woorden: root.words[] of segments[].words[]
             if (!diarize && root.has("words") && root.get("words").isArray()) {
                 for (var w : root.get("words")) words.add(parseWordSafe(w));
             } else if (hasSegments) {
-                for (var seg : root.get("segments")) {
+                for (var seg : segmentsNode) {
                     if (!diarize && seg.has("words")) {
                         for (var w : seg.get("words")) words.add(parseWordSafe(w));
                     }
@@ -124,11 +127,11 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             }
 
             if (diarize && words.isEmpty() && hasSegments) {
-                words.addAll(synthesizeWordsFromSegments(root.get("segments"), request));
+                words.addAll(synthesizeWordsFromSegments(segmentsNode, request));
             }
 
             if (text == null && diarize && hasSegments) {
-                text = buildTextFromSegments(root.get("segments"));
+                text = buildTextFromSegments(segmentsNode);
             }
             if (text == null) text = "";
             if (lang == null || lang.isBlank()) lang = "auto";
@@ -148,7 +151,7 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             meta.put("provider", "openai");
             meta.put("model", props.getModel());
             if (hasSegments) {
-                meta.put("segments", om.convertValue(root.get("segments"), List.class));
+                meta.put("segments", om.convertValue(segmentsNode, List.class));
             }
 
             return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
@@ -156,14 +159,19 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
 
         private List<TranscriptionEngine.Word> synthesizeWordsFromSegments(JsonNode segments, Request request) {
             List<TranscriptionEngine.Word> synthetic = new ArrayList<>();
+            int emptyTextSegments = 0;
+            int missingTimeSegments = 0;
             for (var seg : segments) {
-                String segText = seg.path("text").asText("").trim();
-                double start = seg.path("start").asDouble(Double.NaN);
-                double end = seg.path("end").asDouble(Double.NaN);
+                String segText = firstNonBlank(seg, "text", "transcript", "utterance");
+                segText = segText == null ? "" : segText.trim();
+
+                OptionalLong startOpt = readTimeMs(seg, "start", "start_time");
+                OptionalLong endOpt = readTimeMs(seg, "end", "end_time");
 
                 if (segText.isBlank()) {
                     LOGGER.warn("OpenAI diarize segment missing text mediaId={} start={} end={}",
-                            request.mediaId(), start, end);
+                            request.mediaId(), startOpt.orElse(-1L), endOpt.orElse(-1L));
+                    emptyTextSegments++;
                     continue;
                 }
 
@@ -176,8 +184,11 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                     continue;
                 }
 
-                long segStartMs = Double.isFinite(start) ? Math.round(start * 1000.0) : 0L;
-                long segEndMs = Double.isFinite(end) ? Math.round(end * 1000.0) : segStartMs + DEFAULT_SYNTHETIC_WORD_MS * tokens.size();
+                long segStartMs = startOpt.orElse(0L);
+                long segEndMs = endOpt.orElse(segStartMs + DEFAULT_SYNTHETIC_WORD_MS * tokens.size());
+                if (endOpt.isEmpty()) {
+                    missingTimeSegments++;
+                }
                 long durationMs = Math.max(segEndMs - segStartMs, DEFAULT_SYNTHETIC_WORD_MS * tokens.size());
                 double step = durationMs / (double) tokens.size();
 
@@ -196,16 +207,69 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                 }
 
                 if (segmentWords == 0) {
-                    LOGGER.warn("OpenAI diarize segment yielded no words mediaId={} start={} end={} text='{}'", request.mediaId(),
-                            start, end, segText);
+                    LOGGER.warn("OpenAI diarize segment yielded no words mediaId={} startMs={} endMs={} text='{}'", request.mediaId(),
+                            segStartMs, segEndMs, segText);
                 }
             }
+
+            if (synthetic.isEmpty()) {
+                LOGGER.info("OpenAI diarize synthetic words empty mediaId={} segments={} emptyTextSegments={} missingTimeSegments={}",
+                        request.mediaId(), segments.size(), emptyTextSegments, missingTimeSegments);
+            }
             return synthetic;
+        }
+
+        private JsonNode extractDiarizeSegments(JsonNode root, Request request) {
+            for (String field : List.of("segments", "utterances", "speaker_segments")) {
+                if (root.has(field) && root.get(field).isArray()) {
+                    return root.get(field);
+                }
+            }
+            List<String> fields = new ArrayList<>();
+            root.fieldNames().forEachRemaining(fields::add);
+            LOGGER.warn("OpenAI diarize response missing segments array mediaId={} fields={}", request.mediaId(), fields);
+            return null;
         }
 
         // helpers
         private static String append(String base, String add) {
             return (base == null || base.isBlank()) ? add : (base + " " + add);
+        }
+
+        private OptionalLong readTimeMs(JsonNode seg, String primaryField, String altField) {
+            JsonNode node = seg.has(primaryField) && !seg.get(primaryField).isNull() ? seg.get(primaryField)
+                    : (seg.has(altField) && !seg.get(altField).isNull() ? seg.get(altField) : null);
+            if (node == null) return OptionalLong.empty();
+            if (node.isNumber()) {
+                double val = node.asDouble(Double.NaN);
+                if (!Double.isFinite(val)) return OptionalLong.empty();
+                if (val > 10_000) {
+                    return OptionalLong.of(Math.round(val));
+                }
+                return OptionalLong.of(Math.round(val * 1000.0));
+            }
+            if (node.isTextual()) {
+                try {
+                    double val = Double.parseDouble(node.asText());
+                    if (val > 10_000) {
+                        return OptionalLong.of(Math.round(val));
+                    }
+                    return OptionalLong.of(Math.round(val * 1000.0));
+                } catch (NumberFormatException ignored) {
+                    return OptionalLong.empty();
+                }
+            }
+            return OptionalLong.empty();
+        }
+
+        private String firstNonBlank(JsonNode node, String... fields) {
+            for (String field : fields) {
+                if (node.has(field) && !node.get(field).isNull()) {
+                    String value = node.get(field).asText("").trim();
+                    if (!value.isBlank()) return value;
+                }
+            }
+            return null;
         }
 
         private TranscriptionEngine.Word parseWordSafe(JsonNode w) {
@@ -238,7 +302,8 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private String buildTextFromSegments(JsonNode segments) {
             StringBuilder sb = new StringBuilder();
             for (var seg : segments) {
-                String t = seg.path("text").asText("");
+                String t = firstNonBlank(seg, "text", "transcript", "utterance");
+                if (t == null) t = "";
                 if (!t.isBlank()) {
                     if (sb.length() > 0) sb.append(' ');
                     sb.append(t.trim());
