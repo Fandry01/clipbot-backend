@@ -43,6 +43,22 @@ class UrlDownloaderFailureTest {
     }
 
     @Test
+    void youtubeDownloadFailureSurfacesAuthWallWithSmartApostrophe() {
+        Path target = tempDir.resolve("ext/yt/video/source.mp4");
+        when(storageService.resolveRaw("ext/yt/video/source.mp4")).thenReturn(target);
+
+        UrlDownloader downloader = new TestDownloader(storageService,
+                "Sign in to confirm you’re not a bot.", 1, false, target, null);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                downloader.ensureRawObject("https://www.youtube.com/watch?v=video", "ext/yt/video/source.mp4"));
+
+        String message = ex.getMessage();
+        assertTrue(message.contains("authentication/cookies"));
+        assertTrue(message.contains("Sign in to confirm you’re not a bot."));
+    }
+
+    @Test
     void youtubeDownloadTimeoutIsSurfaced() {
         Path target = tempDir.resolve("ext/yt/video/source.mp4");
         when(storageService.resolveRaw("ext/yt/video/source.mp4")).thenReturn(target);
@@ -72,6 +88,42 @@ class UrlDownloaderFailureTest {
         assertTrue(downloader.lastCmd.contains("--cookies"));
         int idx = downloader.lastCmd.indexOf("--cookies");
         assertEquals(cookies.toAbsolutePath().toString(), downloader.lastCmd.get(idx + 1));
+        assertEquals("https://www.youtube.com/watch?v=video", downloader.lastCmd.get(downloader.lastCmd.size() - 1));
+        assertTrue(idx < downloader.lastCmd.size() - 1);
+        int urlIdx = downloader.lastCmd.indexOf("https://www.youtube.com/watch?v=video");
+        int outputIdx = downloader.lastCmd.indexOf("-o");
+        assertTrue(idx < outputIdx);
+        assertTrue(urlIdx > outputIdx);
+    }
+
+    @Test
+    void youtubeDownloadTimeoutKillsProcess() {
+        Path target = tempDir.resolve("ext/yt/video/source.mp4");
+        when(storageService.resolveRaw("ext/yt/video/source.mp4")).thenReturn(target);
+
+        UrlDownloader downloader = new RealProcessDownloader(storageService, tempDir);
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                downloader.ensureRawObject("https://www.youtube.com/watch?v=video", "ext/yt/video/source.mp4"));
+
+        assertTrue(ex.getMessage().toLowerCase().contains("timeout"));
+    }
+
+    @Test
+    void partialFilesAreMentionedAndDeletedOnFailure() throws IOException {
+        Path target = tempDir.resolve("ext/yt/video/source.mp4");
+        when(storageService.resolveRaw("ext/yt/video/source.mp4")).thenReturn(target);
+        Path partial = target.resolveSibling(target.getFileName().toString() + ".part");
+        Files.createDirectories(partial.getParent());
+        Files.createFile(partial);
+
+        UrlDownloader downloader = new TestDownloader(storageService,
+                "error", 1, false, target, null);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                downloader.ensureRawObject("https://www.youtube.com/watch?v=video", "ext/yt/video/source.mp4"));
+
+        assertTrue(ex.getMessage().contains(partial.toString()));
+        assertTrue(Files.notExists(partial));
     }
 
     private static class TestDownloader extends UrlDownloader {
@@ -109,6 +161,32 @@ class UrlDownloaderFailureTest {
         protected ProcessResult runProcess(List<String> cmd, long timeoutMinutes) {
             this.lastCmd = cmd;
             return super.runProcess(cmd, timeoutMinutes);
+        }
+    }
+
+    private static final class RealProcessDownloader extends UrlDownloader {
+
+        RealProcessDownloader(StorageService storageService, Path tempDir) {
+            super(storageService, "yt-dlp", 120, "JUnit-UA", 3, "ffmpeg", null);
+            this.tempDir = tempDir;
+        }
+
+        private final Path tempDir;
+
+        @Override
+        protected ProcessResult runProcess(List<String> cmd, long timeoutMinutes) throws IOException, InterruptedException {
+            List<String> sleepCmd = List.of("sh", "-c", "sleep 2");
+            return super.runProcess(sleepCmd, 0);
+        }
+
+        @Override
+        public Path ensureRawObject(String url, String objectKey) {
+            Path target = tempDir.resolve(objectKey);
+            try {
+                Files.createDirectories(target.getParent());
+            } catch (IOException ignored) {
+            }
+            return super.ensureRawObject(url, objectKey);
         }
     }
 }

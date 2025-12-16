@@ -99,25 +99,29 @@ public class UrlDownloader {
                 "-S", "res:1080,codec:h264",
                 "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
                 "--merge-output-format", "mp4",
-                "--no-playlist",
-                "-o", mp4Target.toString(),
-                url
+                "--no-playlist"
         ));
 
         maybeAddCookies(cmd);
 
+        cmd.add("-o");
+        cmd.add(mp4Target.toString());
+        cmd.add(url);
+
         ProcessResult result = runProcess(cmd, YTDLP_TIMEOUT_MINUTES);
 
         if (result.timedOut()) {
-            throw new IllegalStateException("yt-dlp timeout after " + YTDLP_TIMEOUT_MINUTES + "m for " + url + " log=" + truncateLog(result.output()));
+            String partialNote = cleanupPartial(mp4Target);
+            throw new IllegalStateException("yt-dlp timeout after " + YTDLP_TIMEOUT_MINUTES + "m for " + url + partialNote + " log=" + truncateLog(result.output()));
         }
 
         if (result.code() != 0 || !Files.exists(mp4Target)) {
             String output = result.output();
+            String partialNote = cleanupPartial(mp4Target);
             if (isAuthWall(output)) {
-                throw new IllegalStateException("YouTube download requires authentication/cookies for " + url + " log=" + truncateLog(output));
+                throw new IllegalStateException("YouTube download requires authentication/cookies for " + url + partialNote + " log=" + truncateLog(output));
             }
-            throw new IllegalStateException("yt-dlp exit=" + result.code() + " output missing: " + mp4Target + " log=" + truncateLog(output));
+            throw new IllegalStateException("yt-dlp exit=" + result.code() + " output missing: " + mp4Target + partialNote + " log=" + truncateLog(output));
         }
 
         log.info("yt-dlp download OK target={} url={}", mp4Target, url);
@@ -184,6 +188,7 @@ public class UrlDownloader {
         boolean finished = p.waitFor(timeoutMinutes, TimeUnit.MINUTES);
         if (!finished) {
             p.destroyForcibly();
+            p.waitFor(5, TimeUnit.SECONDS);
         }
         reader.join();
         int code = finished ? p.exitValue() : -1;
@@ -204,8 +209,10 @@ public class UrlDownloader {
         if (output == null) {
             return false;
         }
-        String normalized = output.toLowerCase(Locale.ROOT).replace('\u2019', '\'');
+        String normalized = output.toLowerCase(Locale.ROOT)
+                .replace('\u2019', '\'');
         return normalized.contains("sign in to confirm you're not a bot")
+                || normalized.contains("sign in to confirm you\u2019re not a bot")
                 || normalized.contains("--cookies-from-browser")
                 || normalized.contains("use --cookies");
     }
@@ -221,6 +228,19 @@ public class UrlDownloader {
         } else {
             log.warn("yt-dlp cookies file configured but missing path={}", cookiesPath);
         }
+    }
+
+    private String cleanupPartial(Path mp4Target) {
+        Path partial = mp4Target.resolveSibling(mp4Target.getFileName().toString() + ".part");
+        if (Files.exists(partial)) {
+            try {
+                Files.deleteIfExists(partial);
+            } catch (IOException e) {
+                log.warn("Failed to delete yt-dlp partial file partial={}", partial, e);
+            }
+            return " partial=" + partial;
+        }
+        return "";
     }
 
     protected record ProcessResult(int code, String output, boolean timedOut) { }
