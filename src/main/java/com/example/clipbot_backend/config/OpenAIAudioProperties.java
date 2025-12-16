@@ -11,7 +11,7 @@ public class OpenAIAudioProperties {
     private String apiKey;
     private String model = "gpt-4o-transcribe-diarize";
     private String language = "auto";
-    private long timeoutSeconds = 300;
+    private long timeoutSeconds = 2700;
     private Boolean diarize;
 
 

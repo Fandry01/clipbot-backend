@@ -29,7 +29,7 @@ import java.util.*;
     public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static final Logger LOGGER = LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
         private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
-        private static final Duration MIN_BLOCK_TIMEOUT = Duration.ofMinutes(8);
+        private static final Duration MIN_BLOCK_TIMEOUT = Duration.ofMinutes(45);
         private final StorageService storageService;
         private final WebClient client;
         private final OpenAIAudioProperties props;

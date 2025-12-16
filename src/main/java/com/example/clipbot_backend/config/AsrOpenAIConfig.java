@@ -29,17 +29,21 @@ import io.netty.handler.timeout.WriteTimeoutHandler;
 public class AsrOpenAIConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger(AsrOpenAIConfig.class);
     private static final int CONNECT_TIMEOUT_MILLIS = 10_000;
-    private static final Duration RESPONSE_TIMEOUT = Duration.ofMinutes(8);
-    private static final Duration READ_TIMEOUT = Duration.ofMinutes(8);
-    private static final Duration WRITE_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofMinutes(45);
+    private static final Duration READ_TIMEOUT = Duration.ofMinutes(45);
+    private static final Duration WRITE_TIMEOUT = Duration.ofMinutes(45);
+    private static final int MAX_CONNECTIONS = 10;
+    private static final Duration PENDING_ACQUIRE_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration MAX_IDLE_TIME = Duration.ofSeconds(20);
+    private static final Duration MAX_LIFE_TIME = Duration.ofMinutes(50);
 
     @Bean("openAiWebClient")
     WebClient openAiWebClient(OpenAIAudioProperties props){
         ConnectionProvider provider = ConnectionProvider.builder("openai-http")
-                .maxConnections(10)
-                .pendingAcquireTimeout(Duration.ofSeconds(30))
-                .maxIdleTime(Duration.ofSeconds(20))
-                .maxLifeTime(Duration.ofMinutes(5))
+                .maxConnections(MAX_CONNECTIONS)
+                .pendingAcquireTimeout(PENDING_ACQUIRE_TIMEOUT)
+                .maxIdleTime(MAX_IDLE_TIME)
+                .maxLifeTime(MAX_LIFE_TIME)
                 .build();
 
         HttpClient httpClient = HttpClient.create(provider)
@@ -60,10 +64,10 @@ public class AsrOpenAIConfig {
                 RESPONSE_TIMEOUT.toSeconds(),
                 READ_TIMEOUT.toSeconds(),
                 WRITE_TIMEOUT.toSeconds(),
-                10,
-                Duration.ofSeconds(30).toSeconds(),
-                Duration.ofSeconds(20).toSeconds(),
-                Duration.ofMinutes(5).toSeconds()
+                MAX_CONNECTIONS,
+                PENDING_ACQUIRE_TIMEOUT.toSeconds(),
+                MAX_IDLE_TIME.toSeconds(),
+                MAX_LIFE_TIME.toSeconds()
         );
 
         return WebClient.builder()
