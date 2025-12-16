@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -129,5 +130,55 @@ class GptDiarizeTranscriptionEngineTest {
         assertThat(ex.getMessage()).contains("status=400")
                 .contains("body=")
                 .contains("{\"error\":\"bad\"}");
+    }
+
+    @Test
+    void retriesAndSurfacesTruncatedResponses() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        when(storage.resolveRaw("obj"))
+                .thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        ExchangeStrategies strategies = ExchangeStrategies.withDefaults();
+        AtomicInteger attempts = new AtomicInteger();
+
+        ExchangeFunction exchangeFunction = request -> {
+            attempts.incrementAndGet();
+            MockClientHttpRequest mockRequest = new MockClientHttpRequest(request.method(), request.url());
+            request.body().insert(mockRequest, new BodyInserter.Context() {
+                @Override
+                public List<HttpMessageWriter<?>> messageWriters() {
+                    return strategies.messageWriters();
+                }
+
+                @Override
+                public Optional<ServerHttpRequest> serverRequest() {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Map<String, Object> hints() {
+                    return Map.of();
+                }
+            }).block();
+
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"hi\"") // truncated
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new GptDiarizeTranscriptionEngine(storage, client, props);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en")));
+
+        assertThat(ex.getMessage()).contains("OPENAI_TRUNCATED_RESPONSE");
+        assertThat(attempts.get()).isEqualTo(3); // initial + 2 retries
     }
 }

@@ -3,6 +3,7 @@ package com.example.clipbot_backend.engine;
 import com.example.clipbot_backend.config.OpenAIAudioProperties;
 import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -26,9 +27,10 @@ import java.time.Duration;
 import java.util.*;
 
 @Service
-    public class OpenAITranscriptionEngine implements TranscriptionEngine {
+public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static final Logger LOGGER = LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
         private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
+        private static final int RETRY_MAX_ATTEMPTS = 2;
         private static final Duration MIN_BLOCK_TIMEOUT = Duration.ofMinutes(45);
         private final StorageService storageService;
         private final WebClient client;
@@ -75,8 +77,9 @@ import java.util.*;
                     .onStatus(HttpStatusCode::isError, resp ->
                             resp.bodyToMono(String.class).defaultIfEmpty("")
                                     .map(body -> new RuntimeException("OpenAI ASR error %s: %s".formatted(resp.statusCode(), body))))
-                    .bodyToMono(JsonNode.class)
-                    .retryWhen(Retry.backoff(3, RETRY_BACKOFF)
+                    .bodyToMono(String.class)
+                    .map(body -> parseJson(body, request))
+                    .retryWhen(Retry.backoff(RETRY_MAX_ATTEMPTS, RETRY_BACKOFF)
                             .filter(this::isRetryable)
                             .doBeforeRetry(signal -> LOGGER.warn(
                                     "OpenAI ASR retry attempt={} mediaId={} cause={}",
@@ -154,6 +157,24 @@ import java.util.*;
             return new TranscriptionEngine.Word(startMs, endMs, text);
         }
 
+        private JsonNode parseJson(String body, Request request) {
+            try {
+                return om.readTree(body);
+            } catch (JsonProcessingException e) {
+                String snippet = truncate(body, 500);
+                int length = body == null ? 0 : body.length();
+                LOGGER.warn("OpenAI ASR parse failure mediaId={} length={} snippet={}", request.mediaId(), length, snippet);
+                throw new OpenAITruncatedResponseException("OPENAI_TRUNCATED_RESPONSE length=" + length + " snippet=" + snippet,
+                        e);
+            }
+        }
+
+        private static String truncate(String body, int max) {
+            if (body == null) return "";
+            if (body.length() <= max) return body;
+            return body.substring(0, max) + "...";
+        }
+
         private String buildTextFromSegments(JsonNode segments) {
             StringBuilder sb = new StringBuilder();
             for (var seg : segments) {
@@ -178,6 +199,15 @@ import java.util.*;
             if (throwable instanceof WebClientRequestException reqEx) {
                 return reqEx.getCause() instanceof PrematureCloseException;
             }
+            if (throwable instanceof OpenAITruncatedResponseException) {
+                return true;
+            }
             return false;
+        }
+
+        private static class OpenAITruncatedResponseException extends RuntimeException {
+            OpenAITruncatedResponseException(String message, Throwable cause) {
+                super(message, cause);
+            }
         }
     }

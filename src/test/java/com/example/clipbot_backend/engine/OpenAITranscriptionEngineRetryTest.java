@@ -126,4 +126,34 @@ class OpenAITranscriptionEngineRetryTest {
                 () -> engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en")));
         assertThat(attempts.get()).isEqualTo(1);
     }
+
+    @Test
+    void retriesOnTruncatedJsonAndSurfacesHelpfulError() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        AtomicInteger attempts = new AtomicInteger();
+
+        ExchangeFunction exchangeFunction = request -> {
+            attempts.incrementAndGet();
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"hi\"") // truncated json
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en")));
+
+        assertThat(ex.getMessage()).contains("OPENAI_TRUNCATED_RESPONSE");
+        assertThat(attempts.get()).isEqualTo(3); // initial + 2 retries
+    }
 }
