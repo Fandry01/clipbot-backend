@@ -29,6 +29,7 @@ import java.util.*;
     public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static final Logger LOGGER = LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
         private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
+        private static final Duration MIN_BLOCK_TIMEOUT = Duration.ofMinutes(8);
         private final StorageService storageService;
         private final WebClient client;
         private final OpenAIAudioProperties props;
@@ -61,6 +62,7 @@ import java.util.*;
             if (diarize) {
                 form.add("response_format", "diarized_json");
                 form.add("chunking_strategy", "auto");
+                LOGGER.info("OpenAI diarization request mediaId={} responseFormat=diarized_json chunking_strategy=auto", request.mediaId());
             } else {
                 form.add("response_format", "verbose_json");
                 form.add("timestamp_granularities[]", "word");
@@ -83,7 +85,8 @@ import java.util.*;
                                     signal.failure() == null ? "unknown" : signal.failure().toString()
                             )));
 
-            JsonNode root = mono.block(Duration.ofSeconds(props.getTimeoutSeconds()));
+            Duration blockTimeout = Duration.ofSeconds(Math.max(props.getTimeoutSeconds(), MIN_BLOCK_TIMEOUT.toSeconds()));
+            JsonNode root = mono.block(blockTimeout);
 
             if (root == null) throw new RuntimeException("Empty response from OpenAI ASR");
 
