@@ -49,7 +49,7 @@ public class AsrOpenAIConfig {
         HttpClient httpClient = HttpClient.create(provider)
                 // ✅ forceer HTTP/1.1 (vermijdt bad_record_mac issues)
                 .protocol(HttpProtocol.HTTP11)
-                .compress(true)
+                .compress(false)
                 .responseTimeout(RESPONSE_TIMEOUT)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MILLIS)
                 .resolver(DefaultAddressResolverGroup.INSTANCE)

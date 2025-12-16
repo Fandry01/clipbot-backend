@@ -17,6 +17,7 @@ import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeFunction;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.http.codec.HttpMessageWriter;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.PrematureCloseException;
@@ -24,6 +25,7 @@ import io.netty.handler.codec.DecoderException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -171,6 +173,39 @@ class OpenAITranscriptionEngineRetryTest {
             int attempt = attempts.incrementAndGet();
             if (attempt < 3) {
                 return Mono.error(new DecoderException(new SSLException("bad_record_mac during read")));
+            }
+
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"ok\",\"language\":\"en\",\"segments\":[]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        assertThat(attempts.get()).isEqualTo(3);
+        assertThat(result.text()).isEqualTo("ok");
+    }
+
+    @Test
+    void retriesOnBadRecordMacWrappedInWebClientRequestException() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        AtomicInteger attempts = new AtomicInteger();
+
+        ExchangeFunction exchangeFunction = request -> {
+            int attempt = attempts.incrementAndGet();
+            if (attempt < 3) {
+                DecoderException decoder = new DecoderException(new SSLException("BAD_RECORD_MAC from peer"));
+                return Mono.error(new WebClientRequestException(decoder, URI.create("https://api.openai.com/v1/audio/transcriptions")));
             }
 
             ClientResponse response = ClientResponse.create(HttpStatus.OK)

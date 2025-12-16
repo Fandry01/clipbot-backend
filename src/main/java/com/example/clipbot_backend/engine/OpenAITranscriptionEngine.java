@@ -85,10 +85,11 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                                 Throwable failure = signal.failure();
                                 Throwable root = rootCause(failure);
                                 LOGGER.warn(
-                                        "OpenAI ASR retry attempt={} mediaId={} type={} rootCause={}",
+                                        "OpenAI ASR retry attempt={} mediaId={} type={} rootCause={} message={}",
                                         signal.totalRetriesInARow() + 1,
                                         request.mediaId(),
                                         failure == null ? "unknown" : failure.getClass().getSimpleName(),
+                                        root == null ? "unknown" : root.getClass().getSimpleName(),
                                         root == null ? "" : root.getMessage()
                                 );
                             }));
@@ -201,7 +202,8 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             if (throwable == null) return false;
             if (hasCause(throwable, PrematureCloseException.class)) return true;
             if (hasCause(throwable, OpenAITruncatedResponseException.class)) return true;
-            return hasBadRecordMac(throwable);
+            if (hasBadRecordMac(throwable)) return true;
+            return hasDecoderWithBadRecordMac(throwable);
         }
 
         private boolean hasBadRecordMac(Throwable throwable) {
@@ -210,6 +212,19 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                 if (cursor instanceof javax.net.ssl.SSLException ssl) {
                     String msg = ssl.getMessage();
                     if (msg != null && msg.toLowerCase(Locale.ROOT).contains("bad_record_mac")) {
+                        return true;
+                    }
+                }
+                cursor = cursor.getCause();
+            }
+            return false;
+        }
+
+        private boolean hasDecoderWithBadRecordMac(Throwable throwable) {
+            Throwable cursor = throwable;
+            while (cursor != null) {
+                if (cursor instanceof io.netty.handler.codec.DecoderException decoder && decoder.getCause() != null) {
+                    if (hasBadRecordMac(decoder.getCause())) {
                         return true;
                     }
                 }
