@@ -56,6 +56,7 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             form.add("model", props.getModel());
 
             boolean diarize = props.isDiarize();
+            boolean logDiarize = diarize && props.isLogDiarizeResponse();
 
             String langHint = request.langHint() != null && !request.langHint().isBlank()
                     ? request.langHint().toLowerCase(Locale.ROOT)
@@ -79,6 +80,12 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                             resp.bodyToMono(String.class).defaultIfEmpty("")
                                     .map(body -> new RuntimeException("OpenAI ASR error %s: %s".formatted(resp.statusCode(), body))))
                     .bodyToMono(String.class)
+                    .doOnNext(body -> {
+                        if (logDiarize) {
+                            LOGGER.debug("OpenAI diarize raw response mediaId={} length={} snippet={}", request.mediaId(),
+                                    body == null ? 0 : body.length(), truncate(body, 5000));
+                        }
+                    })
                     .map(body -> parseJson(body, request))
                     .retryWhen(Retry.backoff(RETRY_MAX_ATTEMPTS, RETRY_BACKOFF)
                             .filter(this::isRetryable)
@@ -103,6 +110,10 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             String text = optText(root, "text");
             String lang = optText(root, "language"); // kan ontbreken
             List<TranscriptionEngine.Word> words = new ArrayList<>();
+
+            if (logDiarize) {
+                logDiarizeStructure(root, request);
+            }
 
             JsonNode diarizeSegments = diarize ? extractDiarizeSegments(root, request) : null;
             JsonNode fallbackSegments = root.has("segments") && root.get("segments").isArray() ? root.get("segments") : null;
@@ -315,6 +326,25 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static String optText(JsonNode node, String field) {
             return (node.has(field) && !node.get(field).isNull() && !node.get(field).asText().isBlank())
                     ? node.get(field).asText() : null;
+        }
+
+        private void logDiarizeStructure(JsonNode root, Request request) {
+            try {
+                List<String> fields = new ArrayList<>();
+                root.fieldNames().forEachRemaining(fields::add);
+                LOGGER.debug("OpenAI diarize parsed root mediaId={} fields={}", request.mediaId(), fields);
+
+                JsonNode segments = extractDiarizeSegments(root, request);
+                if (segments != null && segments.isArray() && segments.size() > 0) {
+                    JsonNode first = segments.get(0);
+                    String serialized = om.writeValueAsString(first);
+                    LOGGER.debug("OpenAI diarize first segment mediaId={} snippet={}", request.mediaId(), truncate(serialized, 2000));
+                } else {
+                    LOGGER.debug("OpenAI diarize segments missing or empty mediaId={}", request.mediaId());
+                }
+            } catch (Exception e) {
+                LOGGER.debug("OpenAI diarize logging failed mediaId={} error={}", request.mediaId(), e.toString());
+            }
         }
 
         private boolean isRetryable(Throwable throwable) {

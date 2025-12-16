@@ -13,6 +13,7 @@ public class OpenAIAudioProperties {
     private String language = "auto";
     private long timeoutSeconds = 2700;
     private Boolean diarize;
+    private boolean logDiarizeResponse = false;
 
 
     public OpenAIAudioProperties() {
@@ -67,5 +68,13 @@ public class OpenAIAudioProperties {
 
     public void setTimeoutSeconds(long timeoutSeconds) {
         this.timeoutSeconds = timeoutSeconds;
+    }
+
+    public boolean isLogDiarizeResponse() {
+        return logDiarizeResponse;
+    }
+
+    public void setLogDiarizeResponse(boolean logDiarizeResponse) {
+        this.logDiarizeResponse = logDiarizeResponse;
     }
 }

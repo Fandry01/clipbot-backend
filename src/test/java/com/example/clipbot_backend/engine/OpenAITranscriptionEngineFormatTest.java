@@ -240,6 +240,7 @@ class OpenAITranscriptionEngineFormatTest {
 
         OpenAIAudioProperties props = new OpenAIAudioProperties();
         props.setDiarize(true);
+        props.setLogDiarizeResponse(true);
 
         ExchangeFunction exchangeFunction = request -> {
             ClientResponse response = ClientResponse.create(HttpStatus.OK)
@@ -253,13 +254,34 @@ class OpenAITranscriptionEngineFormatTest {
                 .exchangeFunction(exchangeFunction)
                 .build();
 
-        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
-        TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+        Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.DEBUG);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        logger.addAppender(listAppender);
 
-        assertThat(result.words()).isNotEmpty();
-        assertThat(result.words())
-                .extracting(TranscriptionEngine.Word::startMs)
-                .isSorted();
-        assertThat(result.meta()).containsKey("segments");
+        try {
+            TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+            TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+            assertThat(result.words()).isNotEmpty();
+            assertThat(result.words())
+                    .extracting(TranscriptionEngine.Word::startMs)
+                    .isSorted();
+            assertThat(result.meta()).containsKey("segments");
+
+            List<String> debugMessages = listAppender.list.stream()
+                    .filter(event -> event.getLevel() == Level.DEBUG)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+
+            assertThat(debugMessages).anyMatch(msg -> msg.contains("raw response"));
+            assertThat(debugMessages).anyMatch(msg -> msg.contains("parsed root"));
+        } finally {
+            logger.setLevel(previous);
+            logger.detachAppender(listAppender);
+            listAppender.stop();
+        }
     }
 }
