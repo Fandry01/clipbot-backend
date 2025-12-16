@@ -256,9 +256,7 @@ public class OneClickOrchestrator {
         String lang = options.normalizedLang();
         String provider = options.normalizedProvider();
         boolean isMulti = media.isMultiSpeakerEffective();
-        if (provider == null) {
-            provider = isMulti ? "openai-diarize" : "fasterwhisper";
-        }
+        String resolvedProvider = provider == null ? (isMulti ? "openai-diarize" : "fasterwhisper") : provider;
         Double sceneThreshold = options.normalizedSceneThreshold();
         Integer requested = options.resolvedTopN(DEFAULT_TOP_N);
         Boolean enqueueRender = options.shouldEnqueueRender(true);
@@ -266,7 +264,7 @@ public class OneClickOrchestrator {
 
         Map<String, Object> detectPayload = new LinkedHashMap<>();
         detectPayload.computeIfAbsent("lang", k -> normalizedLang);
-        detectPayload.computeIfAbsent("provider", k -> provider);
+        detectPayload.computeIfAbsent("provider", k -> resolvedProvider);
         if (sceneThreshold != null) detectPayload.put("sceneThreshold", sceneThreshold);
         if (requested != null) detectPayload.put("topN", requested);
         if (enqueueRender != null) detectPayload.put("enqueueRender", enqueueRender);
@@ -277,7 +275,7 @@ public class OneClickOrchestrator {
             jobId = detectionService.enqueueDetect(
                     mediaId,
                     normalizedLang,
-                    provider,
+                    resolvedProvider,
                     sceneThreshold,
                     requested,
                     enqueueRender
@@ -286,7 +284,7 @@ public class OneClickOrchestrator {
             jobId = jobService.enqueue(mediaId, JobType.TRANSCRIBE, Map.of("detectPayload", detectPayload));
         }
 
-        return new DetectOutcome(new OneClickJob(jobId, "ENQUEUED"), normalizedLang, provider, requested, enqueueRender);
+        return new DetectOutcome(new OneClickJob(jobId, "ENQUEUED"), normalizedLang, resolvedProvider, requested, enqueueRender);
     }
 
     private OneClickRecommendation enqueueRecommendationsIfReady(UUID mediaId, String ownerExternalSubject, OneClickRequest.Options options) {
