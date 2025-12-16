@@ -14,6 +14,7 @@ import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.TranscriptService;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.RecommendationService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,10 +44,11 @@ public class DetectWorkflow {
     private final AudioWindowService audioWindowService;
     private final UrlDownloader urlDownloader;
     private final RecommendationService recommendationService;
+    private final ThumbnailService thumbnailService;
 
     private static final int DEFAULT_TOP_N = 6;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptionService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, UrlDownloader urlDownloader, RecommendationService recommendationService) {
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptionService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
@@ -58,6 +60,7 @@ public class DetectWorkflow {
         this.audioWindowService = audioWindowService;
         this.urlDownloader = urlDownloader;
         this.recommendationService = recommendationService;
+        this.thumbnailService = thumbnailService;
     }
 
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
@@ -80,6 +83,7 @@ public class DetectWorkflow {
                     media.getId());
 
             Path srcPath = requireRaw(media);
+            thumbnailService.extractFromLocalMedia(media, srcPath);
             DetectionParams params = buildParams(payload).withSpeakerTurnsEnabled(isMulti);
             LOGGER.debug("DETECT params speakerTurnsEnabled={} media={}", params.speakerTurnsEnabled(), media.getId());
             var detected = detection.detect(srcPath, tr, params);

@@ -57,6 +57,8 @@ class DetectWorkflowEngineSelectionTest {
     private UrlDownloader urlDownloader;
     @Mock
     private RecommendationService recommendationService;
+    @Mock
+    private com.example.clipbot_backend.service.thumbnail.ThumbnailService thumbnailService;
 
     private DetectWorkflow detectWorkflow;
     private Path tempFile;
@@ -74,7 +76,8 @@ class DetectWorkflowEngineSelectionTest {
                 fasterEngine,
                 audioWindowService,
                 urlDownloader,
-                recommendationService
+                recommendationService,
+                thumbnailService
         );
         tempFile = Files.createTempFile("dw", ".mp4");
         Files.write(tempFile, new byte[]{1, 2, 3});

@@ -306,7 +306,10 @@ public class OneClickOrchestrator {
     }
 
     private ThumbnailSource applyThumbnailIfPresent(UUID projectId, MetadataResult metadata) {
-        if (metadata != null && metadata.platform() == MediaPlatform.YOUTUBE && metadata.thumbnail() != null) {
+        if (metadata != null && metadata.platform() == MediaPlatform.YOUTUBE) {
+            return ThumbnailSource.DEFERRED;
+        }
+        if (metadata != null && metadata.thumbnail() != null) {
             projectService.patch(projectId, ProjectPatch.builder().thumbnailUrl(metadata.thumbnail()).build());
             return ThumbnailSource.YOUTUBE;
         }

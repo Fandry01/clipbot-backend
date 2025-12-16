@@ -131,9 +131,10 @@ class OneClickOrchestratorTest {
         assertThat(response.isCreatedProject()).isTrue();
         assertThat(response.getDetectJob()).isEqualTo(new OneClickJob(jobId, "ENQUEUED"));
         assertThat(response.getRecommendations().computed()).isEqualTo(2);
-        assertThat(response.getThumbnailSource()).isEqualTo("YOUTUBE");
+        assertThat(response.getThumbnailSource()).isEqualTo("DEFERRED");
 
-        verify(projectService).patch(projectId, org.mockito.ArgumentMatchers.any());
+        verify(projectService, never()).patch(any(), any());
+        verifyNoInteractions(thumbnailService);
     }
 
     @Test
@@ -180,6 +181,7 @@ class OneClickOrchestratorTest {
         assertThat(detectPayload).containsEntry("topN", 6);
         assertThat(detectPayload).containsEntry("enqueueRender", true);
         verifyNoInteractions(detectionService);
+        verifyNoInteractions(thumbnailService);
     }
 
     @Test
