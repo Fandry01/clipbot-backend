@@ -13,11 +13,13 @@ import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.OneClickOrchestrationRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.service.Interfaces.JobService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
+import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.SpeakerMode;
 import com.example.clipbot_backend.util.ThumbnailSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +32,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -46,6 +50,7 @@ public class OneClickOrchestrator {
     private final MediaService mediaService;
     private final MediaRepository mediaRepository;
     private final DetectionService detectionService;
+    private final JobService jobService;
     private final RecommendationService recommendationService;
     private final SegmentRepository segmentRepository;
     private final TranscriptRepository transcriptRepository;
@@ -58,6 +63,7 @@ public class OneClickOrchestrator {
                                 MediaService mediaService,
                                 MediaRepository mediaRepository,
                                 DetectionService detectionService,
+                                JobService jobService,
                                 RecommendationService recommendationService,
                                 SegmentRepository segmentRepository,
                                 TranscriptRepository transcriptRepository,
@@ -69,6 +75,7 @@ public class OneClickOrchestrator {
         this.mediaService = mediaService;
         this.mediaRepository = mediaRepository;
         this.detectionService = detectionService;
+        this.jobService = jobService;
         this.recommendationService = recommendationService;
         this.segmentRepository = segmentRepository;
         this.transcriptRepository = transcriptRepository;
@@ -255,15 +262,31 @@ public class OneClickOrchestrator {
         Double sceneThreshold = options.normalizedSceneThreshold();
         Integer requested = options.resolvedTopN(DEFAULT_TOP_N);
         Boolean enqueueRender = options.shouldEnqueueRender(true);
-        UUID jobId = detectionService.enqueueDetect(
-                mediaId,
-                lang == null ? "auto" : lang,
-                provider,
-                sceneThreshold,
-                requested,
-                enqueueRender
-        );
-        return new DetectOutcome(new OneClickJob(jobId, "ENQUEUED"), lang == null ? "auto" : lang, provider, requested, enqueueRender);
+        String normalizedLang = lang == null ? "auto" : lang;
+
+        Map<String, Object> detectPayload = new LinkedHashMap<>();
+        detectPayload.computeIfAbsent("lang", k -> normalizedLang);
+        detectPayload.computeIfAbsent("provider", k -> provider);
+        if (sceneThreshold != null) detectPayload.put("sceneThreshold", sceneThreshold);
+        if (requested != null) detectPayload.put("topN", requested);
+        if (enqueueRender != null) detectPayload.put("enqueueRender", enqueueRender);
+
+        boolean hasTranscript = transcriptRepository.existsByMediaId(mediaId);
+        UUID jobId;
+        if (hasTranscript) {
+            jobId = detectionService.enqueueDetect(
+                    mediaId,
+                    normalizedLang,
+                    provider,
+                    sceneThreshold,
+                    requested,
+                    enqueueRender
+            );
+        } else {
+            jobId = jobService.enqueue(mediaId, JobType.TRANSCRIBE, Map.of("detectPayload", detectPayload));
+        }
+
+        return new DetectOutcome(new OneClickJob(jobId, "ENQUEUED"), normalizedLang, provider, requested, enqueueRender);
     }
 
     private OneClickRecommendation enqueueRecommendationsIfReady(UUID mediaId, String ownerExternalSubject, OneClickRequest.Options options) {
