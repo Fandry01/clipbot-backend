@@ -13,7 +13,7 @@ import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.OneClickOrchestrationRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
-import com.example.clipbot_backend.service.Interfaces.JobService;
+import com.example.clipbot_backend.service.JobService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
