@@ -47,7 +47,7 @@ class GptDiarizeTranscriptionEngineTest {
     }
 
     @Test
-    void transcribeSendsVerboseJsonAndDiarizationFlags() throws Exception {
+    void transcribeSendsDiarizedJsonWithoutWordGranularities() throws Exception {
         StorageService storage = Mockito.mock(StorageService.class);
         when(storage.resolveRaw("obj"))
                 .thenReturn(tempFile);
@@ -76,11 +76,10 @@ class GptDiarizeTranscriptionEngineTest {
 
             String body = mockRequest.getBodyAsString().block();
             assertThat(body).contains("response_format")
-                    .contains("verbose_json")
+                    .contains("diarized_json")
                     .contains("diarization")
-                    .contains("timestamp_granularities[]")
-                    .contains("segment")
-                    .contains("word");
+                    .doesNotContain("timestamp_granularities[]")
+                    .doesNotContain("word");
             assertThat(mockRequest.getHeaders().getContentType()).isEqualTo(MediaType.MULTIPART_FORM_DATA);
 
             String responseJson = "{\"text\":\"hi\",\"language\":\"en\",\"segments\":[]}";

@@ -45,10 +45,8 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
         var form = new LinkedMultiValueMap<String, Object>();
         form.add("file", new FileSystemResource(input));
         form.add("model", props.getModel());
-        form.add("response_format", "verbose_json");
+        form.add("response_format", "diarized_json");
         form.add("diarization", true);
-        form.add("timestamp_granularities[]", "segment");
-        form.add("timestamp_granularities[]", "word");
         if (request.langHint() != null && !request.langHint().isBlank()) {
             form.add("language", request.langHint());
         }
@@ -89,12 +87,20 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
             }
         }
 
+        if (text.isBlank() && !segments.isEmpty()) {
+            text = segments.stream()
+                    .map(m -> m.getOrDefault("text", "").toString())
+                    .filter(str -> !str.isBlank())
+                    .reduce((a, b) -> a + " " + b)
+                    .orElse("");
+        }
+
         Map<String,Object> meta = new LinkedHashMap<>();
-        meta.put("schema", "verbose_json");
+        meta.put("schema", "diarized_json");
         meta.put("segments", segments);
         meta.put("providerModel", props.getModel());
         meta.put("diarization", true);
-        meta.put("timestampGranularities", List.of("segment", "word"));
+        meta.put("timestampGranularities", List.of("segment"));
 
         return new Result(text, List.of(), lang, "GPT_DIARIZE", meta);
     }
