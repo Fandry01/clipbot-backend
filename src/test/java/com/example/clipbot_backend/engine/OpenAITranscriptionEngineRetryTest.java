@@ -20,6 +20,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.http.codec.HttpMessageWriter;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.PrematureCloseException;
+import io.netty.handler.codec.DecoderException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.SSLException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -155,5 +157,37 @@ class OpenAITranscriptionEngineRetryTest {
 
         assertThat(ex.getMessage()).contains("OPENAI_TRUNCATED_RESPONSE");
         assertThat(attempts.get()).isEqualTo(3); // initial + 2 retries
+    }
+
+    @Test
+    void retriesOnBadRecordMacDecoderException() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        AtomicInteger attempts = new AtomicInteger();
+
+        ExchangeFunction exchangeFunction = request -> {
+            int attempt = attempts.incrementAndGet();
+            if (attempt < 3) {
+                return Mono.error(new DecoderException(new SSLException("bad_record_mac during read")));
+            }
+
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"ok\",\"language\":\"en\",\"segments\":[]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        assertThat(attempts.get()).isEqualTo(3);
+        assertThat(result.text()).isEqualTo("ok");
     }
 }

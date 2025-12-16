@@ -79,12 +79,17 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
                 })
                 .retryWhen(Retry.backoff(RETRY_MAX_ATTEMPTS, RETRY_BACKOFF)
                         .filter(this::isRetryable)
-                        .doBeforeRetry(signal -> log.warn(
-                                "GPT diarize retry attempt={} mediaId={} cause={}",
-                                signal.totalRetriesInARow() + 1,
-                                request.mediaId(),
-                                signal.failure() == null ? "unknown" : signal.failure().toString()
-                        )));
+                        .doBeforeRetry(signal -> {
+                            Throwable failure = signal.failure();
+                            Throwable root = rootCause(failure);
+                            log.warn(
+                                    "GPT diarize retry attempt={} mediaId={} type={} rootCause={}",
+                                    signal.totalRetriesInARow() + 1,
+                                    request.mediaId(),
+                                    failure == null ? "unknown" : failure.getClass().getSimpleName(),
+                                    root == null ? "" : root.getMessage()
+                            );
+                        }));
 
         JsonNode root = mono.block();
         String text = root.path("text").asText("");
@@ -146,17 +151,47 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
     }
 
     private boolean isRetryable(Throwable throwable) {
-        if (throwable instanceof PrematureCloseException) {
+        if (throwable == null) return false;
+        if (hasCause(throwable, PrematureCloseException.class)) return true;
+        if (hasCause(throwable, org.springframework.web.reactive.function.client.WebClientRequestException.class)
+                && hasCause(throwable, PrematureCloseException.class)) {
             return true;
         }
-        if (throwable instanceof org.springframework.web.reactive.function.client.WebClientRequestException reqEx
-                && reqEx.getCause() instanceof PrematureCloseException) {
-            return true;
-        }
-        if (throwable instanceof OpenAITruncatedResponseException) {
-            return true;
+        if (hasCause(throwable, OpenAITruncatedResponseException.class)) return true;
+        return hasBadRecordMac(throwable);
+    }
+
+    private boolean hasBadRecordMac(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof javax.net.ssl.SSLException ssl) {
+                String msg = ssl.getMessage();
+                if (msg != null && msg.toLowerCase(java.util.Locale.ROOT).contains("bad_record_mac")) {
+                    return true;
+                }
+            }
+            cursor = cursor.getCause();
         }
         return false;
+    }
+
+    private boolean hasCause(Throwable throwable, Class<? extends Throwable> target) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (target.isInstance(cursor)) return true;
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        Throwable cursor = throwable;
+        Throwable prev = null;
+        while (cursor != null && cursor != prev) {
+            prev = cursor;
+            cursor = cursor.getCause();
+        }
+        return prev;
     }
 
     private static class OpenAITruncatedResponseException extends RuntimeException {

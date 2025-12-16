@@ -81,12 +81,17 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                     .map(body -> parseJson(body, request))
                     .retryWhen(Retry.backoff(RETRY_MAX_ATTEMPTS, RETRY_BACKOFF)
                             .filter(this::isRetryable)
-                            .doBeforeRetry(signal -> LOGGER.warn(
-                                    "OpenAI ASR retry attempt={} mediaId={} cause={}",
-                                    signal.totalRetriesInARow() + 1,
-                                    request.mediaId(),
-                                    signal.failure() == null ? "unknown" : signal.failure().toString()
-                            )));
+                            .doBeforeRetry(signal -> {
+                                Throwable failure = signal.failure();
+                                Throwable root = rootCause(failure);
+                                LOGGER.warn(
+                                        "OpenAI ASR retry attempt={} mediaId={} type={} rootCause={}",
+                                        signal.totalRetriesInARow() + 1,
+                                        request.mediaId(),
+                                        failure == null ? "unknown" : failure.getClass().getSimpleName(),
+                                        root == null ? "" : root.getMessage()
+                                );
+                            }));
 
             Duration blockTimeout = Duration.ofSeconds(Math.max(props.getTimeoutSeconds(), MIN_BLOCK_TIMEOUT.toSeconds()));
             JsonNode root = mono.block(blockTimeout);
@@ -193,16 +198,43 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
         }
 
         private boolean isRetryable(Throwable throwable) {
-            if (throwable instanceof PrematureCloseException) {
-                return true;
-            }
-            if (throwable instanceof WebClientRequestException reqEx) {
-                return reqEx.getCause() instanceof PrematureCloseException;
-            }
-            if (throwable instanceof OpenAITruncatedResponseException) {
-                return true;
+            if (throwable == null) return false;
+            if (hasCause(throwable, PrematureCloseException.class)) return true;
+            if (hasCause(throwable, OpenAITruncatedResponseException.class)) return true;
+            return hasBadRecordMac(throwable);
+        }
+
+        private boolean hasBadRecordMac(Throwable throwable) {
+            Throwable cursor = throwable;
+            while (cursor != null) {
+                if (cursor instanceof javax.net.ssl.SSLException ssl) {
+                    String msg = ssl.getMessage();
+                    if (msg != null && msg.toLowerCase(Locale.ROOT).contains("bad_record_mac")) {
+                        return true;
+                    }
+                }
+                cursor = cursor.getCause();
             }
             return false;
+        }
+
+        private boolean hasCause(Throwable throwable, Class<? extends Throwable> target) {
+            Throwable cursor = throwable;
+            while (cursor != null) {
+                if (target.isInstance(cursor)) return true;
+                cursor = cursor.getCause();
+            }
+            return false;
+        }
+
+        private Throwable rootCause(Throwable throwable) {
+            Throwable cursor = throwable;
+            Throwable prev = null;
+            while (cursor != null && cursor != prev) {
+                prev = cursor;
+                cursor = cursor.getCause();
+            }
+            return prev;
         }
 
         private static class OpenAITruncatedResponseException extends RuntimeException {

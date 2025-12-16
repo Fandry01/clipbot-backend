@@ -35,7 +35,7 @@ public class AsrOpenAIConfig {
     private static final int MAX_CONNECTIONS = 10;
     private static final Duration PENDING_ACQUIRE_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration MAX_IDLE_TIME = Duration.ofSeconds(20);
-    private static final Duration MAX_LIFE_TIME = Duration.ofMinutes(50);
+    private static final Duration MAX_LIFE_TIME = Duration.ofMinutes(5);
 
     @Bean("openAiWebClient")
     WebClient openAiWebClient(OpenAIAudioProperties props){
