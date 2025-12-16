@@ -255,9 +255,9 @@ public class OneClickOrchestrator {
 
         String lang = options.normalizedLang();
         String provider = options.normalizedProvider();
+        boolean isMulti = media.isMultiSpeakerEffective();
         if (provider == null) {
-            Long durationMs = media.getDurationMs();
-            provider = (durationMs != null && durationMs > 25 * 60 * 1000L) ? "openai-diarize" : "fasterwhisper";
+            provider = isMulti ? "openai-diarize" : "fasterwhisper";
         }
         Double sceneThreshold = options.normalizedSceneThreshold();
         Integer requested = options.resolvedTopN(DEFAULT_TOP_N);

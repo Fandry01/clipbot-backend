@@ -183,6 +183,49 @@ class OneClickOrchestratorTest {
     }
 
     @Test
+    void orchestrateSetsDiarizeProviderForMultiSpeakerMedia() {
+        UUID mediaId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        Account owner = new Account();
+        owner.setId(UUID.randomUUID());
+        owner.setExternalSubject("demo-user");
+        Project project = new Project(owner, "My import", null, "https://normalized");
+        project.setId(projectId);
+
+        Media media = new Media();
+        media.setId(mediaId);
+        media.setOwner(owner);
+        media.setSpeakerMode(SpeakerMode.MULTI);
+
+        OneClickRequest request = new OneClickRequest(
+                owner.getExternalSubject(),
+                null,
+                mediaId,
+                null,
+                new OneClickRequest.Options(null, null, null, null, null),
+                "idem-multi",
+                null
+        );
+
+        when(projectService.findByNormalizedUrl(anyString(), any())).thenReturn(Optional.empty());
+        when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
+        when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
+        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
+        when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
+        when(segmentRepository.countByMediaId(mediaId)).thenReturn(2L);
+        when(recommendationService.computeRecommendations(any(), anyInt(), any(), any())).thenReturn(new com.example.clipbot_backend.dto.RecommendationResult(mediaId, 1, java.util.List.of()));
+
+        orchestrator.orchestrate(request);
+
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        verify(detectionService).enqueueDetect(any(), anyString(), providerCaptor.capture(), any(), any(), any());
+        assertThat(providerCaptor.getValue()).isEqualTo("openai-diarize");
+    }
+
+    @Test
     void orchestrateUsesExistingMediaId() {
         UUID mediaId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
