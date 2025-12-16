@@ -12,6 +12,7 @@ public class OpenAIAudioProperties {
     private String model = "gpt-4o-transcribe-diarize";
     private String language = "auto";
     private long timeoutSeconds = 300;
+    private Boolean diarize;
 
 
     public OpenAIAudioProperties() {
@@ -39,6 +40,17 @@ public class OpenAIAudioProperties {
 
     public void setModel(String model) {
         this.model = model;
+    }
+
+    public boolean isDiarize() {
+        if (diarize != null) {
+            return diarize;
+        }
+        return model != null && model.toLowerCase().contains("diarize");
+    }
+
+    public void setDiarize(Boolean diarize) {
+        this.diarize = diarize;
     }
 
     public String getLanguage() {

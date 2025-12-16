@@ -51,13 +51,19 @@ import java.util.*;
             form.add("file", new FileSystemResource(input));
             form.add("model", props.getModel());
 
+            boolean diarize = props.isDiarize();
+
             String langHint = request.langHint() != null && !request.langHint().isBlank()
                     ? request.langHint().toLowerCase(Locale.ROOT)
                     : (props.getLanguage() == null ? null : props.getLanguage().toLowerCase(Locale.ROOT));
             if (langHint != null && !langHint.isBlank()) form.add("language", langHint);
 
-            form.add("response_format", "verbose_json");
-            form.add("timestamp_granularities[]", "word"); // genegeerd? geen probleem
+            if (diarize) {
+                form.add("response_format", "diarized_json");
+            } else {
+                form.add("response_format", "verbose_json");
+                form.add("timestamp_granularities[]", "word");
+            }
 
             Mono<JsonNode> mono = client.post()
                     .uri("/v1/audio/transcriptions")
@@ -84,12 +90,14 @@ import java.util.*;
             String lang = optText(root, "language"); // kan ontbreken
             List<TranscriptionEngine.Word> words = new ArrayList<>();
 
+            boolean hasSegments = root.has("segments") && root.get("segments").isArray();
+
             // woorden: root.words[] of segments[].words[]
-            if (root.has("words") && root.get("words").isArray()) {
+            if (!diarize && root.has("words") && root.get("words").isArray()) {
                 for (var w : root.get("words")) words.add(parseWordSafe(w));
-            } else if (root.has("segments") && root.get("segments").isArray()) {
+            } else if (hasSegments) {
                 for (var seg : root.get("segments")) {
-                    if (seg.has("words")) {
+                    if (!diarize && seg.has("words")) {
                         for (var w : seg.get("words")) words.add(parseWordSafe(w));
                     }
                     if ((text == null || text.isBlank()) && seg.has("text")) {
@@ -99,6 +107,10 @@ import java.util.*;
                         lang = seg.get("language").asText("");
                     }
                 }
+            }
+
+            if (text == null && diarize && hasSegments) {
+                text = buildTextFromSegments(root.get("segments"));
             }
             if (text == null) text = "";
             if (lang == null || lang.isBlank()) lang = "auto";
@@ -117,7 +129,7 @@ import java.util.*;
             Map<String, Object> meta = new LinkedHashMap<>();
             meta.put("provider", "openai");
             meta.put("model", props.getModel());
-            if (root.has("segments") && root.get("segments").isArray()) {
+            if (hasSegments) {
                 meta.put("segments", om.convertValue(root.get("segments"), List.class));
             }
 
@@ -136,6 +148,18 @@ import java.util.*;
             long endMs   = Double.isFinite(e) ? Math.round(e * 1000.0) : startMs;
             String text  = w.path("word").asText(w.path("text").asText(""));
             return new TranscriptionEngine.Word(startMs, endMs, text);
+        }
+
+        private String buildTextFromSegments(JsonNode segments) {
+            StringBuilder sb = new StringBuilder();
+            for (var seg : segments) {
+                String t = seg.path("text").asText("");
+                if (!t.isBlank()) {
+                    if (sb.length() > 0) sb.append(' ');
+                    sb.append(t.trim());
+                }
+            }
+            return sb.toString();
         }
 
         private static String optText(JsonNode node, String field) {

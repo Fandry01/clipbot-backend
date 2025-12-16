@@ -1,0 +1,178 @@
+package com.example.clipbot_backend.engine;
+
+import com.example.clipbot_backend.config.OpenAIAudioProperties;
+import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
+import com.example.clipbot_backend.service.Interfaces.StorageService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.mock.http.client.reactive.MockClientHttpRequest;
+import org.springframework.web.reactive.function.BodyInserter;
+import org.springframework.web.reactive.function.client.ClientResponse;
+import org.springframework.web.reactive.function.client.ExchangeFunction;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.http.codec.HttpMessageWriter;
+import reactor.core.publisher.Mono;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class OpenAITranscriptionEngineFormatTest {
+
+    private Path tempFile;
+
+    @BeforeEach
+    void setup() throws Exception {
+        tempFile = Files.createTempFile("openai-format", ".wav");
+        Files.writeString(tempFile, "data");
+    }
+
+    @AfterEach
+    void cleanup() throws Exception {
+        Files.deleteIfExists(tempFile);
+    }
+
+    @Test
+    void diarizeRequestsUseDiarizedJsonWithoutWordGranularity() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        Mockito.when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        props.setDiarize(true);
+
+        ExchangeStrategies strategies = ExchangeStrategies.withDefaults();
+        AtomicReference<String> bodyRef = new AtomicReference<>();
+
+        ExchangeFunction exchangeFunction = request -> {
+            MockClientHttpRequest mockRequest = new MockClientHttpRequest(request.method(), request.url());
+            request.body().insert(mockRequest, new BodyInserter.Context() {
+                @Override
+                public List<HttpMessageWriter<?>> messageWriters() {
+                    return strategies.messageWriters();
+                }
+
+                @Override
+                public Optional<org.springframework.http.server.reactive.ServerHttpRequest> serverRequest() {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Map<String, Object> hints() {
+                    return Map.of();
+                }
+            }).block();
+
+            bodyRef.set(mockRequest.getBodyAsString().block());
+
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"ok\",\"language\":\"en\",\"segments\":[]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        String body = bodyRef.get();
+        assertThat(body).contains("name=\"response_format\"").contains("diarized_json");
+        assertThat(body).doesNotContain("timestamp_granularities");
+    }
+
+    @Test
+    void nonDiarizeRequestsKeepVerboseJsonWithWords() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        Mockito.when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        props.setDiarize(false);
+        props.setModel("whisper-1");
+
+        ExchangeStrategies strategies = ExchangeStrategies.withDefaults();
+        AtomicReference<String> bodyRef = new AtomicReference<>();
+
+        ExchangeFunction exchangeFunction = request -> {
+            MockClientHttpRequest mockRequest = new MockClientHttpRequest(request.method(), request.url());
+            request.body().insert(mockRequest, new BodyInserter.Context() {
+                @Override
+                public List<HttpMessageWriter<?>> messageWriters() {
+                    return strategies.messageWriters();
+                }
+
+                @Override
+                public Optional<org.springframework.http.server.reactive.ServerHttpRequest> serverRequest() {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Map<String, Object> hints() {
+                    return Map.of();
+                }
+            }).block();
+
+            bodyRef.set(mockRequest.getBodyAsString().block());
+
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"text\":\"ok\",\"language\":\"en\",\"words\":[]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        String body = bodyRef.get();
+        assertThat(body).contains("name=\"response_format\"").contains("verbose_json");
+        assertThat(body).contains("timestamp_granularities[]\"\r\n\r\nword");
+    }
+
+    @Test
+    void parsesDiarizedSegmentsIntoMetaAndText() throws Exception {
+        StorageService storage = Mockito.mock(StorageService.class);
+        Mockito.when(storage.resolveRaw("obj")).thenReturn(tempFile);
+
+        OpenAIAudioProperties props = new OpenAIAudioProperties();
+        props.setDiarize(true);
+
+        ExchangeFunction exchangeFunction = request -> {
+            ClientResponse response = ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body("{\"segments\":[{\"speaker\":\"A\",\"text\":\"Hello there\",\"start\":0.0,\"end\":1.0},{\"speaker\":\"B\",\"text\":\"Hi again\",\"start\":1.0,\"end\":2.0}]}")
+                    .build();
+            return Mono.just(response);
+        };
+
+        WebClient client = WebClient.builder()
+                .exchangeFunction(exchangeFunction)
+                .build();
+
+        TranscriptionEngine engine = new OpenAITranscriptionEngine(storage, client, props);
+        TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
+
+        assertThat(result.text()).isEqualTo("Hello there Hi again");
+        assertThat(result.words()).isEmpty();
+        assertThat(result.meta()).containsEntry("provider", "openai");
+        assertThat((List<?>) result.meta().get("segments")).hasSize(2);
+    }
+}
