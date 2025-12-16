@@ -13,20 +13,38 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.HttpProtocol;
 import reactor.netty.http.client.HttpClient;
+import reactor.netty.resources.ConnectionProvider;
 
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+
 
 @Configuration
 @EnableConfigurationProperties(OpenAIAudioProperties.class)
 public class AsrOpenAIConfig {
     @Bean("openAiWebClient")
     WebClient openAiWebClient(OpenAIAudioProperties props){
-        HttpClient httpClient = HttpClient.create()
+        ConnectionProvider provider = ConnectionProvider.builder("openai-http")
+                .maxConnections(20)
+                .pendingAcquireTimeout(Duration.ofSeconds(20))
+                .maxIdleTime(Duration.ofSeconds(20))
+                .maxLifeTime(Duration.ofMinutes(2))
+                .build();
+
+        HttpClient httpClient = HttpClient.create(provider)
                 // ✅ forceer HTTP/1.1 (vermijdt bad_record_mac issues)
                 .protocol(HttpProtocol.HTTP11)
                 .compress(true)
-                .responseTimeout(Duration.ofSeconds(60))
-                .resolver(DefaultAddressResolverGroup.INSTANCE);
+                .responseTimeout(Duration.ofSeconds(120))
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                .resolver(DefaultAddressResolverGroup.INSTANCE)
+                .doOnConnected(conn -> conn
+                        .addHandlerLast(new ReadTimeoutHandler(120, TimeUnit.SECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(120, TimeUnit.SECONDS))
+                );
 
         return WebClient.builder()
                 .baseUrl(props.getBaseUrl())

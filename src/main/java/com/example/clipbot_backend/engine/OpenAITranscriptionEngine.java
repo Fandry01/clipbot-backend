@@ -5,6 +5,8 @@ import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 
@@ -13,6 +15,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import reactor.core.publisher.Mono;
+import reactor.netty.http.client.PrematureCloseException;
+import reactor.util.retry.Retry;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +27,8 @@ import java.util.*;
 
 @Service
     public class OpenAITranscriptionEngine implements TranscriptionEngine {
+        private static final Logger LOGGER = LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
+        private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
         private final StorageService storageService;
         private final WebClient client;
         private final OpenAIAudioProperties props;
@@ -51,7 +59,7 @@ import java.util.*;
             form.add("response_format", "verbose_json");
             form.add("timestamp_granularities[]", "word"); // genegeerd? geen probleem
 
-            JsonNode root = client.post()
+            Mono<JsonNode> mono = client.post()
                     .uri("/v1/audio/transcriptions")
                     .body(BodyInserters.fromMultipartData(form))
                     .retrieve()
@@ -59,7 +67,16 @@ import java.util.*;
                             resp.bodyToMono(String.class).defaultIfEmpty("")
                                     .map(body -> new RuntimeException("OpenAI ASR error %s: %s".formatted(resp.statusCode(), body))))
                     .bodyToMono(JsonNode.class)
-                    .block(Duration.ofSeconds(props.getTimeoutSeconds()));
+                    .retryWhen(Retry.backoff(3, RETRY_BACKOFF)
+                            .filter(this::isRetryable)
+                            .doBeforeRetry(signal -> LOGGER.warn(
+                                    "OpenAI ASR retry attempt={} mediaId={} cause={}",
+                                    signal.totalRetriesInARow() + 1,
+                                    request.mediaId(),
+                                    signal.failure() == null ? "unknown" : signal.failure().toString()
+                            )));
+
+            JsonNode root = mono.block(Duration.ofSeconds(props.getTimeoutSeconds()));
 
             if (root == null) throw new RuntimeException("Empty response from OpenAI ASR");
 
@@ -124,5 +141,15 @@ import java.util.*;
         private static String optText(JsonNode node, String field) {
             return (node.has(field) && !node.get(field).isNull() && !node.get(field).asText().isBlank())
                     ? node.get(field).asText() : null;
+        }
+
+        private boolean isRetryable(Throwable throwable) {
+            if (throwable instanceof PrematureCloseException) {
+                return true;
+            }
+            if (throwable instanceof WebClientRequestException reqEx) {
+                return reqEx.getCause() instanceof PrematureCloseException;
+            }
+            return false;
         }
     }
