@@ -175,7 +175,10 @@ class OpenAITranscriptionEngineFormatTest {
         TranscriptionEngine.Result result = engine.transcribe(new TranscriptionEngine.Request(UUID.randomUUID(), "obj", "en"));
 
         assertThat(result.text()).isEqualTo("Hello there Hi again");
-        assertThat(result.words()).isEmpty();
+        assertThat(result.words()).hasSizeGreaterThan(2);
+        assertThat(result.words())
+                .extracting(TranscriptionEngine.Word::startMs)
+                .isSorted();
         assertThat(result.meta()).containsEntry("provider", "openai");
         assertThat((List<?>) result.meta().get("segments")).hasSize(2);
     }

@@ -32,6 +32,7 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
         private static final int RETRY_MAX_ATTEMPTS = 2;
         private static final Duration MIN_BLOCK_TIMEOUT = Duration.ofMinutes(45);
+        private static final long DEFAULT_SYNTHETIC_WORD_MS = 200L;
         private final StorageService storageService;
         private final WebClient client;
         private final OpenAIAudioProperties props;
@@ -122,6 +123,10 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                 }
             }
 
+            if (diarize && words.isEmpty() && hasSegments) {
+                words.addAll(synthesizeWordsFromSegments(root.get("segments")));
+            }
+
             if (text == null && diarize && hasSegments) {
                 text = buildTextFromSegments(root.get("segments"));
             }
@@ -147,6 +152,36 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             }
 
             return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
+        }
+
+        private List<TranscriptionEngine.Word> synthesizeWordsFromSegments(JsonNode segments) {
+            List<TranscriptionEngine.Word> synthetic = new ArrayList<>();
+            for (var seg : segments) {
+                String segText = seg.path("text").asText("").trim();
+                if (segText.isBlank()) continue;
+
+                List<String> tokens = Arrays.stream(segText.split("\\s+"))
+                        .filter(token -> !token.isBlank())
+                        .toList();
+                if (tokens.isEmpty()) continue;
+
+                double start = seg.path("start").asDouble(Double.NaN);
+                double end = seg.path("end").asDouble(Double.NaN);
+                long segStartMs = Double.isFinite(start) ? Math.round(start * 1000.0) : 0L;
+                long segEndMs = Double.isFinite(end) ? Math.round(end * 1000.0) : segStartMs + DEFAULT_SYNTHETIC_WORD_MS * tokens.size();
+                long durationMs = Math.max(segEndMs - segStartMs, DEFAULT_SYNTHETIC_WORD_MS * tokens.size());
+                double step = durationMs / (double) tokens.size();
+
+                for (int i = 0; i < tokens.size(); i++) {
+                    long tokenStart = segStartMs + Math.round(i * step);
+                    long tokenEnd = segStartMs + Math.round((i + 1) * step);
+                    if (tokenEnd <= tokenStart) {
+                        tokenEnd = tokenStart + DEFAULT_SYNTHETIC_WORD_MS;
+                    }
+                    synthetic.add(new TranscriptionEngine.Word(tokenStart, tokenEnd, tokens.get(i)));
+                }
+            }
+            return synthetic;
         }
 
         // helpers
