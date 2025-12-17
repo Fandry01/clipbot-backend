@@ -256,7 +256,7 @@ class OpenAITranscriptionEngineFormatTest {
 
         Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
         Level previous = logger.getLevel();
-        logger.setLevel(Level.DEBUG);
+        logger.setLevel(Level.INFO);
         ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
         listAppender.start();
         logger.addAppender(listAppender);
@@ -271,13 +271,13 @@ class OpenAITranscriptionEngineFormatTest {
                     .isSorted();
             assertThat(result.meta()).containsKey("segments");
 
-            List<String> debugMessages = listAppender.list.stream()
-                    .filter(event -> event.getLevel() == Level.DEBUG)
+            List<String> infoMessages = listAppender.list.stream()
+                    .filter(event -> event.getLevel().isGreaterOrEqual(Level.INFO))
                     .map(ILoggingEvent::getFormattedMessage)
                     .toList();
 
-            assertThat(debugMessages).anyMatch(msg -> msg.contains("raw response"));
-            assertThat(debugMessages).anyMatch(msg -> msg.contains("parsed root"));
+            assertThat(infoMessages).anyMatch(msg -> msg.contains("raw response"));
+            assertThat(infoMessages).anyMatch(msg -> msg.contains("parsed root"));
         } finally {
             logger.setLevel(previous);
             logger.detachAppender(listAppender);

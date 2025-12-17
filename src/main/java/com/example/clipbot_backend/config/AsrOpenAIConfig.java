@@ -1,13 +1,8 @@
 package com.example.clipbot_backend.config;
 
-import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
-import com.example.clipbot_backend.engine.OpenAITranscriptionEngine;
-import com.example.clipbot_backend.service.Interfaces.StorageService;
-
 import io.netty.resolver.DefaultAddressResolverGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -78,13 +73,4 @@ public class AsrOpenAIConfig {
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(32 * 1024 * 1024))
                 .build();
     }
-    @Bean
-    TranscriptionEngine transcriptionEngine(
-            OpenAIAudioProperties props,
-            StorageService storageService,
-            @Qualifier("openAiWebClient") WebClient openAiWebClient // ← expliciet deze client
-    ) {
-        return new OpenAITranscriptionEngine(storageService,openAiWebClient,props);
-    }
-
 }

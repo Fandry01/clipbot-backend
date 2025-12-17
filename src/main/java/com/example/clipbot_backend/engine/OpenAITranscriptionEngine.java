@@ -26,7 +26,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
 
-@Service
+@Service("gptDiarizeEngine")
 public class OpenAITranscriptionEngine implements TranscriptionEngine {
         private static final Logger LOGGER = LoggerFactory.getLogger(OpenAITranscriptionEngine.class);
         private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
@@ -111,14 +111,14 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             String lang = optText(root, "language"); // kan ontbreken
             List<TranscriptionEngine.Word> words = new ArrayList<>();
 
-            if (logDiarize) {
-                logDiarizeStructure(root, request);
-            }
-
-            JsonNode diarizeSegments = diarize ? extractDiarizeSegments(root, request) : null;
+            SegmentSelection diarizeSelection = diarize ? extractDiarizeSegments(root, request) : null;
             JsonNode fallbackSegments = root.has("segments") && root.get("segments").isArray() ? root.get("segments") : null;
-            JsonNode segmentsNode = diarize ? diarizeSegments : fallbackSegments;
+            JsonNode segmentsNode = diarize ? (diarizeSelection != null ? diarizeSelection.node() : null) : fallbackSegments;
             boolean hasSegments = segmentsNode != null && segmentsNode.isArray();
+
+            if (logDiarize) {
+                logDiarizeStructure(root, diarizeSelection, request);
+            }
 
             // woorden: root.words[] of segments[].words[]
             if (!diarize && root.has("words") && root.get("words").isArray()) {
@@ -163,6 +163,11 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
             meta.put("model", props.getModel());
             if (hasSegments) {
                 meta.put("segments", om.convertValue(segmentsNode, List.class));
+            } else if (diarize) {
+                List<String> fields = new ArrayList<>();
+                root.fieldNames().forEachRemaining(fields::add);
+                LOGGER.warn("OpenAI diarize response missing segments mediaId={} fields={}", request.mediaId(), fields);
+                meta.put("diarizeMissingSegments", true);
             }
 
             return new TranscriptionEngine.Result(text, words, lang, "openai", meta);
@@ -227,13 +232,16 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                 LOGGER.info("OpenAI diarize synthetic words empty mediaId={} segments={} emptyTextSegments={} missingTimeSegments={}",
                         request.mediaId(), segments.size(), emptyTextSegments, missingTimeSegments);
             }
+            LOGGER.info("OpenAI diarize synthesize mediaId={} segments={} producedWords={} emptyTextSegments={} missingTimeSegments={}",
+                    request.mediaId(), segments.size(), synthetic.size(), emptyTextSegments, missingTimeSegments);
             return synthetic;
         }
 
-        private JsonNode extractDiarizeSegments(JsonNode root, Request request) {
-            for (String field : List.of("segments", "utterances", "speaker_segments")) {
+        private SegmentSelection extractDiarizeSegments(JsonNode root, Request request) {
+            List<String> candidates = List.of("segments", "utterances", "speaker_segments", "speakerTurns", "turns");
+            for (String field : candidates) {
                 if (root.has(field) && root.get(field).isArray()) {
-                    return root.get(field);
+                    return new SegmentSelection(field, root.get(field));
                 }
             }
             List<String> fields = new ArrayList<>();
@@ -328,24 +336,30 @@ public class OpenAITranscriptionEngine implements TranscriptionEngine {
                     ? node.get(field).asText() : null;
         }
 
-        private void logDiarizeStructure(JsonNode root, Request request) {
+        private void logDiarizeStructure(JsonNode root, SegmentSelection selection, Request request) {
             try {
                 List<String> fields = new ArrayList<>();
                 root.fieldNames().forEachRemaining(fields::add);
                 LOGGER.info("OpenAI diarize parsed root mediaId={} fields={}", request.mediaId(), fields);
 
-                JsonNode segments = extractDiarizeSegments(root, request);
+                JsonNode segments = selection == null ? null : selection.node();
+                String fieldUsed = selection == null ? "<none>" : selection.field();
+                int count = segments != null && segments.isArray() ? segments.size() : 0;
+                LOGGER.info("OpenAI diarize segments mediaId={} fieldUsed={} count={}", request.mediaId(), fieldUsed, count);
                 if (segments != null && segments.isArray() && segments.size() > 0) {
                     JsonNode first = segments.get(0);
                     String serialized = om.writeValueAsString(first);
+                    List<String> segmentFields = new ArrayList<>();
+                    first.fieldNames().forEachRemaining(segmentFields::add);
                     LOGGER.info("OpenAI diarize first segment mediaId={} snippet={}", request.mediaId(), truncate(serialized, 2000));
-                } else {
-                    LOGGER.info("OpenAI diarize segments missing or empty mediaId={}", request.mediaId());
+                    LOGGER.info("OpenAI diarize first segment keys mediaId={} keys={}", request.mediaId(), segmentFields);
                 }
             } catch (Exception e) {
                 LOGGER.info("OpenAI diarize logging failed mediaId={} error={}", request.mediaId(), e.toString());
             }
         }
+
+        private record SegmentSelection(String field, JsonNode node) {}
 
         private boolean isRetryable(Throwable throwable) {
             if (throwable == null) return false;
