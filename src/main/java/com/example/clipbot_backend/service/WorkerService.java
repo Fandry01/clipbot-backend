@@ -126,7 +126,7 @@ public class WorkerService {
     }
 
 @Transactional
-void handleTranscribe(Job job) {
+    void handleTranscribe(Job job) {
     LOGGER.debug("TRANSCRIBE enter jobId={} mediaId={}", job.getId(), job.getMedia()!=null?job.getMedia().getId():null); // 👈
     Objects.requireNonNull(job, "job");
     final UUID mediaId = job.getMedia() != null ? job.getMedia().getId() : null;
@@ -141,7 +141,7 @@ void handleTranscribe(Job job) {
         // 0) Idempotent: als transcript al bestaat → overslaan en direct DETECT enqueuen
         if (transcriptService.existsAnyFor(mediaId)) {
             jobService.markDone(job.getId(), Map.of("skipped", "already_transcribed"));
-            jobService.enqueue(mediaId, DETECT, Map.of());
+            jobService.enqueue(mediaId, DETECT, forwardedDetectPayload(job, null));
             return;
         }
 
@@ -178,13 +178,31 @@ void handleTranscribe(Job job) {
         // 3) Transcribe
         boolean isMulti = media.isMultiSpeakerEffective();
         TranscriptionEngine engine = isMulti ? gptDiarizeEngine : fasterWhisperEngine;
+        String selectedEngine = isMulti ? "GPT_DIARIZE" : "FASTER_WHISPER";
+        LOGGER.info("TRANSCRIBE selectEngine={} mediaId={} objectKey={}", selectedEngine, mediaId, key);
 
         var req = new TranscriptionEngine.Request(
                 media.getId(),
                 key,          // laat engine zelf resolveRaw(key) doen (liefst via StorageService-injectie)
                 null          // extra opties (bijv. target lang) optioneel
         );
-        var res = engine.transcribe(req);
+        TranscriptionEngine.Result res;
+        try {
+            res = engine.transcribe(req);
+        } catch (Exception primaryEx) {
+            if (isMulti) {
+                LOGGER.warn("TRANSCRIBE primary GPT diarize failed mediaId={} reason={} – falling back to FasterWhisper", mediaId, primaryEx.toString());
+                try {
+                    res = fasterWhisperEngine.transcribe(req);
+                    selectedEngine = "FASTER_WHISPER";
+                } catch (Exception fallbackEx) {
+                    primaryEx.addSuppressed(fallbackEx);
+                    throw primaryEx;
+                }
+            } else {
+                throw primaryEx;
+            }
+        }
 
         // 4) Transcript upsert
         transcriptService.upsert(media.getId(), res);
@@ -196,10 +214,7 @@ void handleTranscribe(Job job) {
                 "provider", res.provider(),
                 "durationMs", (System.nanoTime() - t0) / 1_000_000
         ));
-        jobService.enqueue(media.getId(), DETECT, Map.of(
-                "lang", res.lang(),
-                "provider", res.provider()
-        ));
+        jobService.enqueue(media.getId(), DETECT, forwardedDetectPayload(job, res));
 
         LOGGER.info("TRANSCRIBE {} OK in {} ms (lang={}, provider={})",
                 mediaId, (System.nanoTime() - t0) / 1_000_000, res.lang(), res.provider());
@@ -218,6 +233,21 @@ void handleTranscribe(Job job) {
     }
 
 }
+
+    private Map<String, Object> forwardedDetectPayload(Job job, TranscriptionEngine.Result res) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (job != null && job.getPayload() != null) {
+            Object detect = job.getPayload().get("detectPayload");
+            if (detect instanceof Map<?, ?> detectMap) {
+                detectMap.forEach((k, v) -> payload.put(String.valueOf(k), v));
+            }
+        }
+        if (res != null) {
+            payload.put("lang", res.lang());
+            payload.put("provider", res.provider());
+        }
+        return payload.isEmpty() ? Map.of() : payload;
+    }
     private String stackTop(Throwable ex) {
         var sw = new java.io.StringWriter();
         ex.printStackTrace(new java.io.PrintWriter(sw));

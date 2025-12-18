@@ -10,20 +10,24 @@ import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.OneClickOrchestrationRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.service.Interfaces.JobService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.OrchestrationStatus;
+import com.example.clipbot_backend.util.JobType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,6 +38,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +64,8 @@ class OneClickOrchestratorTest {
     private OneClickOrchestrationRepository orchestrationRepository;
     @Mock
     private ThumbnailService thumbnailService;
+    @Mock
+    private JobService jobService;
 
     private ObjectMapper objectMapper;
 
@@ -73,6 +80,7 @@ class OneClickOrchestratorTest {
                 mediaService,
                 mediaRepository,
                 detectionService,
+                jobService,
                 recommendationService,
                 segmentRepository,
                 transcriptRepository,
@@ -110,7 +118,7 @@ class OneClickOrchestratorTest {
                 .thenReturn(Optional.empty());
         when(projectService.findByNormalizedUrl(anyString(), anyString())).thenReturn(Optional.empty());
         when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
-        when(mediaService.createMediaFromUrl(any(), any(), any(), anyString(), any(), any())).thenReturn(mediaId);
+        when(mediaService.createMediaFromUrl(any(), any(), any(), anyString(), any(), any(), any())).thenReturn(mediaId);
         when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
         when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
         when(segmentRepository.countByMediaId(mediaId)).thenReturn(3L);
@@ -123,9 +131,100 @@ class OneClickOrchestratorTest {
         assertThat(response.isCreatedProject()).isTrue();
         assertThat(response.getDetectJob()).isEqualTo(new OneClickJob(jobId, "ENQUEUED"));
         assertThat(response.getRecommendations().computed()).isEqualTo(2);
-        assertThat(response.getThumbnailSource()).isEqualTo("YOUTUBE");
+        assertThat(response.getThumbnailSource()).isEqualTo("DEFERRED");
 
-        verify(projectService).patch(projectId, org.mockito.ArgumentMatchers.any());
+        verify(projectService, never()).patch(any(), any());
+        verifyNoInteractions(thumbnailService);
+    }
+
+    @Test
+    void orchestrateEnqueuesTranscribeWhenTranscriptMissing() {
+        UUID mediaId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID transcribeJobId = UUID.randomUUID();
+        Account owner = new Account();
+        owner.setId(UUID.randomUUID());
+        owner.setExternalSubject("demo-user");
+        Project project = new Project(owner, "My import", null, "https://normalized");
+        project.setId(projectId);
+
+        OneClickRequest request = new OneClickRequest(
+                owner.getExternalSubject(),
+                "https://youtube.com/watch?v=abc",
+                null,
+                "My import",
+                new OneClickRequest.Options("auto", "fasterwhisper", 0.3, 6, true),
+                "idem-1",
+                null
+        );
+
+        MetadataResult metadata = new MetadataResult(MediaPlatform.YOUTUBE, "https://normalized", "Meta title", "auth", 120L, "thumb");
+        when(metadataService.resolve(anyString())).thenReturn(metadata);
+        when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        when(projectService.findByNormalizedUrl(anyString(), anyString())).thenReturn(Optional.empty());
+        when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
+        when(mediaService.createMediaFromUrl(any(), any(), any(), anyString(), any(), any(), any())).thenReturn(mediaId);
+        when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(false);
+        when(segmentRepository.countByMediaId(mediaId)).thenReturn(0L);
+        when(jobService.enqueue(mediaId, JobType.TRANSCRIBE, org.mockito.ArgumentMatchers.anyMap())).thenReturn(transcribeJobId);
+
+        OneClickResponse response = orchestrator.orchestrate(request);
+
+        assertThat(response.getDetectJob()).isEqualTo(new OneClickJob(transcribeJobId, "ENQUEUED"));
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(jobService).enqueue(org.mockito.ArgumentMatchers.eq(mediaId), org.mockito.ArgumentMatchers.eq(JobType.TRANSCRIBE), payloadCaptor.capture());
+        Map<String, Object> detectPayload = (Map<String, Object>) payloadCaptor.getValue().get("detectPayload");
+        assertThat(detectPayload).containsEntry("lang", "auto");
+        assertThat(detectPayload).containsEntry("provider", "fasterwhisper");
+        assertThat(detectPayload).containsEntry("sceneThreshold", 0.3);
+        assertThat(detectPayload).containsEntry("topN", 6);
+        assertThat(detectPayload).containsEntry("enqueueRender", true);
+        verifyNoInteractions(detectionService);
+        verifyNoInteractions(thumbnailService);
+    }
+
+    @Test
+    void orchestrateSetsDiarizeProviderForMultiSpeakerMedia() {
+        UUID mediaId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        Account owner = new Account();
+        owner.setId(UUID.randomUUID());
+        owner.setExternalSubject("demo-user");
+        Project project = new Project(owner, "My import", null, "https://normalized");
+        project.setId(projectId);
+
+        Media media = new Media();
+        media.setId(mediaId);
+        media.setOwner(owner);
+        media.setSpeakerMode(SpeakerMode.MULTI);
+
+        OneClickRequest request = new OneClickRequest(
+                owner.getExternalSubject(),
+                null,
+                mediaId,
+                null,
+                new OneClickRequest.Options(null, null, null, null, null),
+                "idem-multi",
+                null
+        );
+
+        when(projectService.findByNormalizedUrl(anyString(), any())).thenReturn(Optional.empty());
+        when(orchestrationRepository.findByOwnerExternalSubjectAndIdempotencyKey(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+        when(projectService.createProjectBySubject(anyString(), anyString(), any(), any())).thenReturn(project);
+        when(mediaRepository.findById(mediaId)).thenReturn(Optional.of(media));
+        when(detectionService.enqueueDetect(any(), anyString(), anyString(), any(), any(), any())).thenReturn(jobId);
+        when(transcriptRepository.existsByMediaId(mediaId)).thenReturn(true);
+        when(segmentRepository.countByMediaId(mediaId)).thenReturn(2L);
+        when(recommendationService.computeRecommendations(any(), anyInt(), any(), any())).thenReturn(new com.example.clipbot_backend.dto.RecommendationResult(mediaId, 1, java.util.List.of()));
+
+        orchestrator.orchestrate(request);
+
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        verify(detectionService).enqueueDetect(any(), anyString(), providerCaptor.capture(), any(), any(), any());
+        assertThat(providerCaptor.getValue()).isEqualTo("openai-diarize");
     }
 
     @Test
@@ -168,7 +267,7 @@ class OneClickOrchestratorTest {
 
         assertThat(response.getMediaId()).isEqualTo(mediaId);
         assertThat(response.isCreatedProject()).isTrue();
-        verify(mediaService, never()).createMediaFromUrl(any(), any(), any(), anyString(), any(), any());
+        verify(mediaService, never()).createMediaFromUrl(any(), any(), any(), anyString(), any(), any(), any());
     }
 
     @Test

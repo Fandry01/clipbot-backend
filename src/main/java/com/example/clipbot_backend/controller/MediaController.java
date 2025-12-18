@@ -4,12 +4,15 @@ import com.example.clipbot_backend.dto.web.MediaCreateRequest;
 import com.example.clipbot_backend.dto.web.MediaFromUrlRequest;
 import com.example.clipbot_backend.dto.web.MediaFromUrlResponse;
 import com.example.clipbot_backend.dto.web.MediaResponse;
+import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
+import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.MediaService;
 import com.example.clipbot_backend.service.metadata.MetadataResult;
 import com.example.clipbot_backend.service.metadata.MetadataService;
 import com.example.clipbot_backend.util.MediaPlatform;
 import com.example.clipbot_backend.util.MediaStatus;
+import com.example.clipbot_backend.util.SpeakerMode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -23,12 +26,15 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/v1/media")
 public class MediaController {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(MediaController.class);
     private final MediaService mediaService;
     private final MetadataService metadataService;
+    private final AccountService accountService;
 
-    public MediaController(MediaService mediaService, MetadataService metadataService) {
+    public MediaController(MediaService mediaService, MetadataService metadataService, AccountService accountService) {
         this.mediaService = mediaService;
         this.metadataService = metadataService;
+        this.accountService = accountService;
     }
 
     @PostMapping("/from-url")
@@ -43,8 +49,14 @@ public class MediaController {
         final MediaPlatform platform = (md != null ? md.platform() : metadataService.detectPlatform(request.url()));
         final Long durationMs = (md != null && md.durationSec() != null) ? safeToMillis(md.durationSec()) : null;
 
+        SpeakerMode speakerMode = Boolean.TRUE.equals(request.podcastOrInterview()) ? SpeakerMode.MULTI : SpeakerMode.SINGLE;
+        Account owner = resolveOwner(request);
+        if (SpeakerMode.MULTI.equals(speakerMode)) {
+            LOGGER.info("INGEST from-url podcastOrInterview=true speakerMode=MULTI ownerId={} url={}", owner.getId(), normalizedUrl);
+        }
+
         UUID mediaId = mediaService.createMediaFromUrl(
-                request.ownerId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride()
+                owner.getId(), normalizedUrl, platform, source, durationMs, request.objectKeyOverride(), speakerMode
         );
         Media media = mediaService.get(mediaId);
         // Service zet DOWNLOADING; dat moeten we zo teruggeven:
@@ -91,6 +103,37 @@ public class MediaController {
         } catch (ArithmeticException e) {
             return Long.MAX_VALUE;
         }
+    }
+
+    private Account resolveOwner(MediaFromUrlRequest request) {
+        String ownerIdRaw = normalize(request.ownerId());
+        String ownerExternalSubject = normalize(request.ownerExternalSubject());
+
+        if (ownerIdRaw != null) {
+            try {
+                UUID ownerId = UUID.fromString(ownerIdRaw);
+                if (ownerExternalSubject != null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_CONFLICT");
+                }
+                return accountService.getByIdOrThrow(ownerId);
+            } catch (IllegalArgumentException ex) {
+                if (ownerExternalSubject != null && !ownerIdRaw.equals(ownerExternalSubject)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_CONFLICT");
+                }
+                LOGGER.debug("OwnerId '{}' is not a UUID; resolving as externalSubject", ownerIdRaw);
+                return accountService.getByExternalSubjectOrThrow(ownerIdRaw);
+            }
+        }
+
+        if (ownerExternalSubject != null) {
+            return accountService.getByExternalSubjectOrThrow(ownerExternalSubject);
+        }
+
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OWNER_REQUIRED");
+    }
+
+    private String normalize(String value) {
+        return (value == null) ? null : value.trim().isBlank() ? null : value.trim();
     }
 
 

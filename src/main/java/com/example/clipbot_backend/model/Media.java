@@ -56,7 +56,7 @@ public class Media {
     private Integer speakerCountDetected;
 
     @Enumerated(EnumType.STRING)
-    private SpeakerMode speakerMode = AUTO;
+    private SpeakerMode speakerMode = SINGLE;
 
     public Media(UUID id, Account owner, String objectKey, Long durationMs,String source, Instant createdAt) {
         this.id = id;
@@ -163,12 +163,7 @@ public class Media {
 
     @Transient
     public boolean isMultiSpeakerEffective() {
-        SpeakerMode mode = this.speakerMode != null ? this.speakerMode : SpeakerMode.AUTO;
-        return switch (mode) {
-            case MULTI  -> true;                                  // Interview/Podcast
-            case SINGLE -> false;                                 // Monologue
-            case AUTO   -> (speakerCountDetected != null && speakerCountDetected > 1);
-        };
+        return SpeakerMode.MULTI.equals(this.speakerMode);
     }
 }
 

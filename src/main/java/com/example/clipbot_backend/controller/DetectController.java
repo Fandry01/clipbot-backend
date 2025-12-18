@@ -86,7 +86,7 @@ public class DetectController {
   }
 
   private void ensureOwnedBy(UUID mediaId, String subject) {
-    var media = mediaRepo.findById(mediaId)
+    var media = mediaRepo.findByIdWithOwner(mediaId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "MEDIA_NOT_FOUND"));
     if (isAdmin(subject)) return; // admin bypass
     var ownerSub = media.getOwner().getExternalSubject();

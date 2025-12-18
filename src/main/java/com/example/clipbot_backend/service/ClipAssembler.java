@@ -27,7 +27,8 @@ public class ClipAssembler {
                                 List<SilenceEvent> silences,
                                 long minMs, long maxMs, long snapThreshMs,
                                 double targetLenSec, double sigmaSec,
-                                int maxCandidates) {
+                                int maxCandidates,
+                                HeuristicScorer.SpeakerContext speakerContext) {
 
         List<Window> out = new ArrayList<>();
         if (sentences.isEmpty()) return out;
@@ -44,7 +45,7 @@ public class ClipAssembler {
                 if (sSnap>=0) s = sSnap;
                 if (eSnap>=0) e = eSnap;
 
-                var comp = scorer.scoreWindow(sentences.subList(i, j+1), targetLenSec, sigmaSec);
+                var comp = scorer.scoreWindow(sentences.subList(i, j+1), targetLenSec, sigmaSec, speakerContext, s, e);
                 if (comp.overall() <= 0.0) continue;
 
                 out.add(new Window(i,j,s,e,comp.overall(), comp.toMeta()));
@@ -84,7 +85,8 @@ public class ClipAssembler {
             List<SentenceSpan> sentences,
             long minMs, long maxMs,
             double targetLenSec, double sigmaSec,
-            int maxCandidates
+            int maxCandidates,
+            HeuristicScorer.SpeakerContext speakerContext
     ) {
         List<Window> out = new ArrayList<>();
         if (sentences == null || sentences.isEmpty()) return out;
@@ -111,7 +113,7 @@ public class ClipAssembler {
 
                 // 2) Score berekenen
                 var slice = sentences.subList(i, j + 1);
-                var comp = scorer.scoreWindow(slice, targetLenSec, sigmaSec);
+                var comp = scorer.scoreWindow(slice, targetLenSec, sigmaSec, speakerContext, start, end);
                 double score = Math.max(0.01, comp.overall());
                 if (score < 0.05) continue; // mini-threshold voorkomt ruis
 

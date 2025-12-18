@@ -1,10 +1,10 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.service.Interfaces.StorageService;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,14 +12,20 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.StringJoiner;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class UrlDownloader {
+    private static final Logger log = LoggerFactory.getLogger(UrlDownloader.class);
+    private static final long YTDLP_TIMEOUT_MINUTES = 15;
+    private static final int LOG_SNIPPET_MAX = 4_000;
     private final StorageService storage;
-    private final String ytdlp
-            ;
+    private final String ytdlp;
+    private final String ytdlpCookiesFile;
     // HTTP download settings
     private final Integer httpTimeoutMs;
     private final String httpUserAgent;
@@ -28,17 +34,18 @@ public class UrlDownloader {
 
     public UrlDownloader(StorageService storage,
                          @Value("${downloader.ytdlp.bin:yt-dlp}") String ytdlp,
-                         @Value("${downloader.http.timeoutSeconds:120}")Integer httpTimeoutMs,
-                         @Value("${downloader.http.userAgent:Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari}")String httpUserAgent,
+                         @Value("${downloader.http.timeoutSeconds:120}") Integer httpTimeoutMs,
+                         @Value("${downloader.http.userAgent:Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari}") String httpUserAgent,
                          @Value("${downloader.http.maxRedirects:5}") Integer maxRedirects,
-                         @Value("${ffmpeg.binary:ffmpeg}") String ffmpegBin)
-    {
+                         @Value("${ffmpeg.binary:ffmpeg}") String ffmpegBin,
+                         @Value("${YTDLP_COOKIES_FILE:#{null}}") String ytdlpCookiesFile) {
         this.storage = storage;
         this.ytdlp = ytdlp;
         this.httpTimeoutMs = httpTimeoutMs * 1000;
         this.httpUserAgent = httpUserAgent;
         this.maxRedirects = maxRedirects;
         this.ffmpegBin = ffmpegBin;
+        this.ytdlpCookiesFile = ytdlpCookiesFile;
     }
 
     /** Downloadt naar RAW exact op objectKey en retourneert dat pad */
@@ -86,23 +93,38 @@ public class UrlDownloader {
     }
     private void downloadYoutubeMp4(String url, Path mp4Target) throws Exception {
         Files.createDirectories(mp4Target.getParent());
-        // Kies h264 + beste audio, ≤1080p; forceer mp4 container.
-        Process p = new ProcessBuilder(
+        List<String> cmd = new ArrayList<>(List.of(
                 ytdlp,
                 "--no-progress", "--newline",
                 "-S", "res:1080,codec:h264",
                 "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
                 "--merge-output-format", "mp4",
-                "--no-playlist",
-                "-o", mp4Target.toString(),
-                url
-        ).redirectErrorStream(true).start();
+                "--no-playlist"
+        ));
 
-        try (var in = p.getInputStream()) { in.transferTo(System.out); }
-        int code = p.waitFor();
-        if (code != 0 || !Files.exists(mp4Target)) {
-            throw new IllegalStateException("yt-dlp exit=" + code + " output missing: " + mp4Target);
+        maybeAddCookies(cmd);
+
+        cmd.add("-o");
+        cmd.add(mp4Target.toString());
+        cmd.add(url);
+
+        ProcessResult result = runProcess(cmd, YTDLP_TIMEOUT_MINUTES);
+
+        if (result.timedOut()) {
+            String partialNote = cleanupPartial(mp4Target);
+            throw new IllegalStateException("yt-dlp timeout after " + YTDLP_TIMEOUT_MINUTES + "m for " + url + partialNote + " log=" + truncateLog(result.output()));
         }
+
+        if (result.code() != 0 || !Files.exists(mp4Target)) {
+            String output = result.output();
+            String partialNote = cleanupPartial(mp4Target);
+            if (isAuthWall(output)) {
+                throw new IllegalStateException("YouTube download requires authentication/cookies for " + url + partialNote + " log=" + truncateLog(output));
+            }
+            throw new IllegalStateException("yt-dlp exit=" + result.code() + " output missing: " + mp4Target + partialNote + " log=" + truncateLog(output));
+        }
+
+        log.info("yt-dlp download OK target={} url={}", mp4Target, url);
     }
     private void extractAudioM4a(Path mp4, Path m4a) throws Exception {
         Files.createDirectories(m4a.getParent());
@@ -147,6 +169,81 @@ public class UrlDownloader {
         try (var in = p.getInputStream()) { in.transferTo(System.out); }
         return p.waitFor();
     }
+
+    protected ProcessResult runProcess(List<String> cmd, long timeoutMinutes) throws IOException, InterruptedException {
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        StringJoiner joiner = new StringJoiner(System.lineSeparator());
+        Thread reader = new Thread(() -> {
+            try (var buffered = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = buffered.readLine()) != null) {
+                    joiner.add(line);
+                }
+            } catch (IOException ignored) {
+                // Process failure is handled by exit code/timeout; output collected so far is enough.
+            }
+        });
+        reader.start();
+
+        boolean finished = p.waitFor(timeoutMinutes, TimeUnit.MINUTES);
+        if (!finished) {
+            p.destroyForcibly();
+            p.waitFor(5, TimeUnit.SECONDS);
+        }
+        reader.join();
+        int code = finished ? p.exitValue() : -1;
+        return new ProcessResult(code, joiner.toString(), !finished);
+    }
+
+    private String truncateLog(String output) {
+        if (output == null || output.isBlank()) {
+            return "<no output>";
+        }
+        if (output.length() <= LOG_SNIPPET_MAX) {
+            return output;
+        }
+        return output.substring(0, LOG_SNIPPET_MAX) + "...";
+    }
+
+    private boolean isAuthWall(String output) {
+        if (output == null) {
+            return false;
+        }
+        String normalized = output.toLowerCase(Locale.ROOT)
+                .replace('\u2019', '\'');
+        return normalized.contains("sign in to confirm you're not a bot")
+                || normalized.contains("sign in to confirm you\u2019re not a bot")
+                || normalized.contains("--cookies-from-browser")
+                || normalized.contains("use --cookies");
+    }
+
+    private void maybeAddCookies(List<String> cmd) {
+        if (ytdlpCookiesFile == null || ytdlpCookiesFile.isBlank()) {
+            return;
+        }
+        Path cookiesPath = Path.of(ytdlpCookiesFile).toAbsolutePath();
+        if (Files.exists(cookiesPath)) {
+            cmd.add("--cookies");
+            cmd.add(cookiesPath.toString());
+        } else {
+            log.warn("yt-dlp cookies file configured but missing path={}", cookiesPath);
+        }
+    }
+
+    private String cleanupPartial(Path mp4Target) {
+        Path partial = mp4Target.resolveSibling(mp4Target.getFileName().toString() + ".part");
+        if (Files.exists(partial)) {
+            try {
+                Files.deleteIfExists(partial);
+            } catch (IOException e) {
+                log.warn("Failed to delete yt-dlp partial file partial={}", partial, e);
+            }
+            return " partial=" + partial;
+        }
+        return "";
+    }
+
+    protected record ProcessResult(int code, String output, boolean timedOut) { }
 
 
     private void downloadWithHttp(String url, Path target) throws Exception {

@@ -1,23 +1,27 @@
 package com.example.clipbot_backend.service;
 
 import com.example.clipbot_backend.dto.DetectionParams;
-import com.example.clipbot_backend.dto.FwVerboseResponse;
 import com.example.clipbot_backend.dto.SegmentDTO;
 import com.example.clipbot_backend.dto.WordsParser;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
+import com.example.clipbot_backend.engine.Interfaces.TranscriptionEngine;
+import com.example.clipbot_backend.dto.FwVerboseResponse;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.service.FasterWhisperClient;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.RecommendationService;
+import com.example.clipbot_backend.service.TranscriptService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.MediaStatus;
 import com.fasterxml.jackson.databind.JsonNode;
-import io.netty.handler.timeout.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,23 +41,31 @@ public class DetectWorkflow {
     private final SegmentRepository segmentRepo;
     private final StorageService storage;
     private final DetectionEngine detection;
-    private final FasterWhisperClient fastWhisperClient;
+    private final TranscriptService transcriptService;
+    private final TranscriptionEngine gptDiarizeEngine;
+    private final TranscriptionEngine fasterWhisperEngine;
     private final AudioWindowService audioWindowService;
+    private final FasterWhisperClient fastWhisperClient;
     private final UrlDownloader urlDownloader;
     private final RecommendationService recommendationService;
+    private final ThumbnailService thumbnailService;
 
     private static final int DEFAULT_TOP_N = 6;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, UrlDownloader urlDownloader, RecommendationService recommendationService) {
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, FasterWhisperClient fastWhisperClient, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
         this.storage = storage;
         this.detection = detection;
-        this.fastWhisperClient = fastWhisperClient;
+        this.transcriptService = transcriptService;
+        this.gptDiarizeEngine = gptDiarizeEngine;
+        this.fasterWhisperEngine = fasterWhisperEngine;
         this.audioWindowService = audioWindowService;
+        this.fastWhisperClient = fastWhisperClient;
         this.urlDownloader = urlDownloader;
         this.recommendationService = recommendationService;
+        this.thumbnailService = thumbnailService;
     }
 
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
@@ -67,15 +79,18 @@ public class DetectWorkflow {
             // --- No TX: IO / transcript ---
             String lang = optStr(payload, "lang");
             String provider = optStr(payload, "provider");
-            LOGGER.debug("DW.run about to resolveOrCreateTranscript lang={} provider={}", lang, provider);
+            boolean isMulti = media.isMultiSpeakerEffective();
+            LOGGER.info("DETECT selectEngine mediaId={} speakerMode={} isMultiSpeakerEffective={} jobProvider={}", media.getId(), media.getSpeakerMode(), isMulti, provider);
 
-            Transcript tr = resolveOrCreateTranscript(media, lang, provider); // zonder TX
+            Transcript tr = resolveOrCreateTranscript(media, lang, provider, isMulti); // zonder TX
             LOGGER.info("DETECT words={} media={}",
                     (tr!=null && tr.getWords()!=null && tr.getWords().has("items")) ? tr.getWords().get("items").size() : -1,
                     media.getId());
 
             Path srcPath = requireRaw(media);
-            DetectionParams params = buildParams(payload);
+            thumbnailService.extractFromLocalMedia(media, srcPath);
+            DetectionParams params = buildParams(payload).withSpeakerTurnsEnabled(isMulti);
+            LOGGER.debug("DETECT params speakerTurnsEnabled={} media={}", params.speakerTurnsEnabled(), media.getId());
             var detected = detection.detect(srcPath, tr, params);
 
             var refined = refineWithWordBounds(srcPath, detected, tr);
@@ -104,63 +119,47 @@ public class DetectWorkflow {
         return media;
     }
 
-    protected Transcript resolveOrCreateTranscript(Media media, String lang, String provider) throws Exception {
-        LOGGER.debug("DW.resolveOrCreateTranscript media={} lang={} provider={}", media.getId(), lang, provider);
+    protected Transcript resolveOrCreateTranscript(Media media, String lang, String provider, boolean isMultiSpeaker) throws Exception {
+        LOGGER.debug("DW.resolveOrCreateTranscript media={} lang={} provider={} isMulti={}", media.getId(), lang, provider, isMultiSpeaker);
 
-        // 1) Als er al een transcript is: return (laatste = ok voor detect)
         Transcript existing = transcriptRepo.findTopByMediaOrderByCreatedAtDesc(media).orElse(null);
         if (existing != null) {
             LOGGER.debug("DW transcript exists id={} createdAt={}", existing.getId(), existing.getCreatedAt());
             return existing;
         }
 
-        // 2) RAW garanderen (download bij source=url)
         Path raw = requireRaw(media);
         long size = java.nio.file.Files.size(raw);
-        LOGGER.info("FW START media={} key={} size={}B", media.getId(), media.getObjectKey(), size);
 
-        // Provider-keuze (nu alleen fw; breid later uit met gpt engine)
-        String chosen = (provider == null || provider.isBlank()) ? "fw" : provider.trim().toLowerCase(Locale.ROOT);
-        if (!chosen.equals("fw")) {
-            LOGGER.warn("Provider '{}' nog niet geimplementeerd in DetectWorkflow; fallback naar 'fw'", chosen);
-            chosen = "fw";
+        TranscriptionEngine engine = isMultiSpeaker ? gptDiarizeEngine : fasterWhisperEngine;
+        String selectedEngine = isMultiSpeaker ? "GPT_DIARIZE" : "FASTER_WHISPER";
+        LOGGER.info("DETECT TRANSCRIBE selectEngine={} mediaId={} speakerMode={} jobProvider={} size={}B", selectedEngine, media.getId(), media.getSpeakerMode(), provider, size);
+
+        TranscriptionEngine.Request req = new TranscriptionEngine.Request(media.getId(), media.getObjectKey(), null);
+        TranscriptionEngine.Result res;
+        try {
+            res = engine.transcribe(req);
+        } catch (Exception ex) {
+            if (isMultiSpeaker) {
+                LOGGER.warn("DETECT TRANSCRIBE primary GPT diarize failed mediaId={} reason={} – fallback to FasterWhisper", media.getId(), ex.toString());
+                res = fasterWhisperEngine.transcribe(req);
+                selectedEngine = "FASTER_WHISPER";
+            } else {
+                throw ex;
+            }
         }
 
-        long t0 = System.nanoTime();
-        FwVerboseResponse fw;
+        UUID transcriptId = transcriptService.upsert(media.getId(), res);
+        Transcript saved = transcriptRepo.findById(transcriptId).orElseThrow();
         try {
-            fw = fastWhisperClient.transcribeFile(raw, true); // word timestamps
-        } catch (TimeoutException te) {
-            LOGGER.warn("FW TIMEOUT media={} after {} ms", media.getId(), (System.nanoTime()-t0)/1_000_000);
-            throw te;
-        }
-        long dtMs = (System.nanoTime()-t0)/1_000_000;
-        int segCount = (fw != null && fw.segments()!=null) ? fw.segments().size() : -1;
-        LOGGER.info("FW DONE  media={} in {} ms, segments={}", media.getId(), dtMs, segCount);
-
-        // 4) Transcript entity vullen
-        Transcript t = new Transcript();
-        t.setMedia(media);
-        t.setLang(  fw != null && fw.language()!=null ? fw.language().toLowerCase(Locale.ROOT) : defaultLang(lang));
-        t.setProvider("fw");
-        t.setText( fw != null && fw.text()!=null ? fw.text().strip() : "" );
-        t.setWords( toWordsJson(fw) ); // JsonNode
-
-        t = transcriptRepo.save(t);
-
-        // Korte sanity-log (hoeveel woorden parsed door WordsParser)
-        try {
-            var words = WordsParser.extract(t);
-            LOGGER.info("TRANSCRIPT SAVED media={} id={} words={}", media.getId(), t.getId(), words.size());
+            var words = WordsParser.extract(saved);
+            LOGGER.info("TRANSCRIPT SAVED media={} id={} words={} engine={}", media.getId(), saved.getId(), words.size(), selectedEngine);
         } catch (Exception parseEx) {
-            LOGGER.warn("WordsParser failed media={} id={} err={}", media.getId(), t.getId(), parseEx.toString());
+            LOGGER.warn("WordsParser failed media={} id={} engine={} err={}", media.getId(), saved.getId(), selectedEngine, parseEx.toString());
         }
-
-        return t;
+        LOGGER.info("DETECT TRANSCRIBE DONE mediaId={} engine={}", media.getId(), selectedEngine);
+        return saved;
     }
-
-
-
 
 
     private String defaultLang(String hint) {
@@ -215,7 +214,8 @@ public class DetectWorkflow {
                 minMs, maxMs, maxCand,
                 silDb, silMin, snapMs,
                 target, sigma,
-                sceneT, snapSc, scBonus
+                sceneT, snapSc, scBonus,
+                false
         );
     }
 

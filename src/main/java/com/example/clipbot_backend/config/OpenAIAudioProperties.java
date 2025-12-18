@@ -11,7 +11,9 @@ public class OpenAIAudioProperties {
     private String apiKey;
     private String model = "gpt-4o-transcribe-diarize";
     private String language = "auto";
-    private long timeoutSeconds = 300;
+    private long timeoutSeconds = 2700;
+    private Boolean diarize;
+    private boolean logDiarizeResponse = false;
 
 
     public OpenAIAudioProperties() {
@@ -41,6 +43,17 @@ public class OpenAIAudioProperties {
         this.model = model;
     }
 
+    public boolean isDiarize() {
+        if (diarize != null) {
+            return diarize;
+        }
+        return model != null && model.toLowerCase().contains("diarize");
+    }
+
+    public void setDiarize(Boolean diarize) {
+        this.diarize = diarize;
+    }
+
     public String getLanguage() {
         return language;
     }
@@ -55,5 +68,13 @@ public class OpenAIAudioProperties {
 
     public void setTimeoutSeconds(long timeoutSeconds) {
         this.timeoutSeconds = timeoutSeconds;
+    }
+
+    public boolean isLogDiarizeResponse() {
+        return logDiarizeResponse;
+    }
+
+    public void setLogDiarizeResponse(boolean logDiarizeResponse) {
+        this.logDiarizeResponse = logDiarizeResponse;
     }
 }

@@ -2,16 +2,26 @@ package com.example.clipbot_backend.engine.Interfaces;
 
 import com.example.clipbot_backend.config.OpenAIAudioProperties;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
-
+import reactor.core.publisher.Mono;
+import reactor.netty.http.client.PrematureCloseException;
+import reactor.util.retry.Retry;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,9 +30,13 @@ import java.util.Map;
 @Service
 @Qualifier("gptDiarizeEngine")
 public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
+    private static final Logger log = LoggerFactory.getLogger(GptDiarizeTranscriptionEngine.class);
+    private static final Duration RETRY_BACKOFF = Duration.ofMillis(200);
+    private static final int RETRY_MAX_ATTEMPTS = 2;
     private final StorageService storage;
     private final WebClient openAiClient;
     private final OpenAIAudioProperties props;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public GptDiarizeTranscriptionEngine(StorageService storage, @Qualifier("openAiWebClient")WebClient openAiClient, OpenAIAudioProperties props) {
         this.storage = storage;
@@ -37,20 +51,47 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
 
         var form = new LinkedMultiValueMap<String, Object>();
         form.add("file", new FileSystemResource(input));
-        form.add("model", "gpt-4o-transcribe-diarize");
+        form.add("model", props.getModel());
         form.add("response_format", "diarized_json");
+        form.add("chunking_strategy", "auto");
+        form.add("diarization", true);
         if (request.langHint() != null && !request.langHint().isBlank()) {
             form.add("language", request.langHint());
         }
 
-        String json = openAiClient.post()
+        Mono<JsonNode> mono = openAiClient.post()
                 .uri("/v1/audio/transcriptions")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(BodyInserters.fromMultipartData(form))
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
+                .exchangeToMono(this::deserializeResponse)
+                .flatMap(resp -> {
+                    if (!resp.status().is2xxSuccessful()) {
+                        log.error("OpenAI transcription failed status={} mediaId={} objectKey={} body={}",
+                                resp.status().value(), request.mediaId(), request.objectKey(), truncate(resp.body(), 2_000));
+                        return Mono.error(new IllegalStateException("OpenAI transcription failed: status=" + resp.status().value()
+                                + " body=" + truncate(resp.body(), 2_000)));
+                    }
+                    try {
+                        return Mono.just(parseJson(resp.body(), request));
+                    } catch (RuntimeException ex) {
+                        return Mono.error(ex);
+                    }
+                })
+                .retryWhen(Retry.backoff(RETRY_MAX_ATTEMPTS, RETRY_BACKOFF)
+                        .filter(this::isRetryable)
+                        .doBeforeRetry(signal -> {
+                            Throwable failure = signal.failure();
+                            Throwable root = rootCause(failure);
+                            log.warn(
+                                    "GPT diarize retry attempt={} mediaId={} type={} rootCause={}",
+                                    signal.totalRetriesInARow() + 1,
+                                    request.mediaId(),
+                                    failure == null ? "unknown" : failure.getClass().getSimpleName(),
+                                    root == null ? "" : root.getMessage()
+                            );
+                        }));
 
-        var root = new ObjectMapper().readTree(json);
+        JsonNode root = mono.block();
         String text = root.path("text").asText("");
         String lang = root.path("language").asText("auto");
 
@@ -66,11 +107,96 @@ public class GptDiarizeTranscriptionEngine implements TranscriptionEngine {
             }
         }
 
+        if (text.isBlank() && !segments.isEmpty()) {
+            text = segments.stream()
+                    .map(m -> m.getOrDefault("text", "").toString())
+                    .filter(str -> !str.isBlank())
+                    .reduce((a, b) -> a + " " + b)
+                    .orElse("");
+        }
+
         Map<String,Object> meta = new LinkedHashMap<>();
         meta.put("schema", "diarized_json");
         meta.put("segments", segments);
-        meta.put("providerModel", "gpt-4o-transcribe-diarize");
+        meta.put("providerModel", props.getModel());
+        meta.put("diarization", true);
+        meta.put("timestampGranularities", List.of("segment"));
 
         return new Result(text, List.of(), lang, "GPT_DIARIZE", meta);
+    }
+
+    private Mono<ResponseWithStatus> deserializeResponse(ClientResponse clientResponse) {
+        return clientResponse.bodyToMono(String.class)
+                .defaultIfEmpty("")
+                .map(body -> new ResponseWithStatus(clientResponse.statusCode(), body));
+    }
+
+    private record ResponseWithStatus(HttpStatusCode status, String body) {}
+
+    private JsonNode parseJson(String body, Request request) {
+        try {
+            return objectMapper.readTree(body);
+        } catch (JsonProcessingException e) {
+            String snippet = truncate(body, 500);
+            int length = body == null ? 0 : body.length();
+            log.warn("GPT diarize parse failure mediaId={} length={} snippet={}", request.mediaId(), length, snippet);
+            throw new OpenAITruncatedResponseException("OPENAI_TRUNCATED_RESPONSE length=" + length + " snippet=" + snippet, e);
+        }
+    }
+
+    private static String truncate(String body, int max) {
+        if (body == null) return "";
+        if (body.length() <= max) return body;
+        return body.substring(0, max) + "...";
+    }
+
+    private boolean isRetryable(Throwable throwable) {
+        if (throwable == null) return false;
+        if (hasCause(throwable, PrematureCloseException.class)) return true;
+        if (hasCause(throwable, org.springframework.web.reactive.function.client.WebClientRequestException.class)
+                && hasCause(throwable, PrematureCloseException.class)) {
+            return true;
+        }
+        if (hasCause(throwable, OpenAITruncatedResponseException.class)) return true;
+        return hasBadRecordMac(throwable);
+    }
+
+    private boolean hasBadRecordMac(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof javax.net.ssl.SSLException ssl) {
+                String msg = ssl.getMessage();
+                if (msg != null && msg.toLowerCase(java.util.Locale.ROOT).contains("bad_record_mac")) {
+                    return true;
+                }
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    private boolean hasCause(Throwable throwable, Class<? extends Throwable> target) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (target.isInstance(cursor)) return true;
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        Throwable cursor = throwable;
+        Throwable prev = null;
+        while (cursor != null && cursor != prev) {
+            prev = cursor;
+            cursor = cursor.getCause();
+        }
+        return prev;
+    }
+
+    private static class OpenAITruncatedResponseException extends RuntimeException {
+        OpenAITruncatedResponseException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

@@ -15,7 +15,8 @@ public record DetectionParams(
                               // scene change
                               double sceneThreshold,
                               long   snapSceneMs,
-                              double sceneAlignBonus
+                              double sceneAlignBonus,
+                              boolean speakerTurnsEnabled
 
 ) {
     // Compacte ctor voor defaults + guard rails
@@ -36,18 +37,31 @@ public record DetectionParams(
         snapSceneMs     = (snapSceneMs     > 0) ? snapSceneMs      : 400;
         sceneAlignBonus = (sceneAlignBonus > 0) ? sceneAlignBonus  : 0.12;
 
+        speakerTurnsEnabled = speakerTurnsEnabled;
+
         // Basisvalidatie
         if (minDurationMs >= maxDurationMs)
             throw new IllegalArgumentException("minDurationMs must be < maxDurationMs");
     }
     // Handige named factory voor defaults (optioneel)
-    public static DetectionParams defaults() { return new DetectionParams(0,0,0,0,0,0,0,0,0,0,0); }
+    public static DetectionParams defaults() { return new DetectionParams(0,0,0,0,0,0,0,0,0,0,0,false); }
 
     // "withers" voor fluency (optioneel)
     public DetectionParams withMaxCandidates(int n) { return new DetectionParams(
             minDurationMs, maxDurationMs, n,
             silenceNoiseDb, silenceMinDurSec, snapThresholdMs,
             targetLenSec, lenSigmaSec,
-            sceneThreshold, snapSceneMs, sceneAlignBonus
+            sceneThreshold, snapSceneMs, sceneAlignBonus,
+            speakerTurnsEnabled
     );}
+
+    public DetectionParams withSpeakerTurnsEnabled(boolean enabled) {
+        return new DetectionParams(
+                minDurationMs, maxDurationMs, maxCandidates,
+                silenceNoiseDb, silenceMinDurSec, snapThresholdMs,
+                targetLenSec, lenSigmaSec,
+                sceneThreshold, snapSceneMs, sceneAlignBonus,
+                enabled
+        );
+    }
 }

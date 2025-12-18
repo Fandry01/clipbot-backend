@@ -60,6 +60,23 @@ public final class WordsParser {
         return out;
     }
 
+    public static List<SpeakerTurn> extractSpeakerTurns(Transcript transcript) {
+        if (transcript == null || transcript.getWords() == null) return List.of();
+        JsonNode root = transcript.getWords();
+        JsonNode segs = root.path("segments");
+        if (!segs.isArray() || segs.isEmpty()) return List.of();
+        List<SpeakerTurn> turns = new ArrayList<>();
+        for (JsonNode s : segs) {
+            long start = pickMs(s.get("startMs"), s.get("start"));
+            long end = pickMs(s.get("endMs"), s.get("end"));
+            String speaker = firstText(s, "speaker", "spk");
+            if (end <= start) continue;
+            turns.add(new SpeakerTurn(speaker == null ? "" : speaker, start, end));
+        }
+        turns.sort(Comparator.comparingLong(SpeakerTurn::startMs));
+        return turns;
+    }
+
 
     /* ---------- helpers ---------- */
 

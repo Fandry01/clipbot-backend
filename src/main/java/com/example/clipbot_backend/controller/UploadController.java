@@ -31,8 +31,9 @@ public class UploadController {
             @RequestParam("owner") String ownerExternalSubject,
             @RequestParam(value = "objectKey", required = false) String objectKey,
             @RequestPart("file") MultipartFile file,
-            @RequestParam(value = "source", required = false, defaultValue = "upload") String source) throws Exception {
-        return uploadService.uploadLocal(ownerExternalSubject, objectKey, file, source);
+            @RequestParam(value = "source", required = false, defaultValue = "upload") String source,
+            @RequestParam(value = "podcastOrInterview", required = false) Boolean podcastOrInterview) throws Exception {
+        return uploadService.uploadLocal(ownerExternalSubject, objectKey, file, source, podcastOrInterview);
     }
 
 
