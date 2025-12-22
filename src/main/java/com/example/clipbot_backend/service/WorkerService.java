@@ -1,5 +1,6 @@
 package com.example.clipbot_backend.service;
 
+import com.example.clipbot_backend.config.WorkerExecutorProperties;
 import com.example.clipbot_backend.dto.*;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.DetectionEngine;
@@ -8,6 +9,8 @@ import com.example.clipbot_backend.model.*;
 import com.example.clipbot_backend.repository.*;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
+import com.example.clipbot_backend.service.IngestCleanupService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
@@ -20,8 +23,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
+import java.util.stream.Collectors;
 
 import static com.example.clipbot_backend.util.JobType.DETECT;
 
@@ -42,6 +49,14 @@ public class WorkerService {
     private final DetectWorkflow detectWorkflow;
     private final ClipWorkFlow clipWorkFlow;
     private final ClipService clipService;
+    private final ThumbnailService thumbnailService;
+    private final IngestCleanupService ingestCleanupService;
+
+    private final Executor workerExecutor;
+    private final WorkerExecutorProperties workerProperties;
+    private final Semaphore clipSemaphore;
+    private final Semaphore transcribeSemaphore;
+    private final Semaphore detectSemaphore;
 
     // engines
      TranscriptionEngine gptDiarizeEngine;
@@ -52,8 +67,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
     private final RenderService renderService;
 
-
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, RenderService renderService, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, ThumbnailService thumbnailService, IngestCleanupService ingestCleanupService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, RenderService renderService, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine, @Qualifier("workerTaskExecutor") Executor workerExecutor, WorkerExecutorProperties workerProperties) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -67,6 +81,8 @@ public class WorkerService {
         this.detectWorkflow = detectWorkflow;
         this.clipWorkFlow = clipWorkFlow;
         this.clipService = clipService;
+        this.thumbnailService = thumbnailService;
+        this.ingestCleanupService = ingestCleanupService;
         this.detection = detection;
         this.renderEngine = renderEngine;
         this.storage = storage;
@@ -74,104 +90,145 @@ public class WorkerService {
         this.renderService = renderService;
         this.gptDiarizeEngine = gptDiarizeEngine;
         this.fasterWhisperEngine = fasterWhisperEngine;
+        this.workerExecutor = workerExecutor;
+        this.workerProperties = workerProperties;
+        this.clipSemaphore = new Semaphore(Math.max(1, workerProperties.getClip().getMaxConcurrency()));
+        this.transcribeSemaphore = new Semaphore(Math.max(1, workerProperties.getTranscribe().getMaxConcurrency()));
+        this.detectSemaphore = new Semaphore(Math.max(1, workerProperties.getDetect().getMaxConcurrency()));
     }
 
     @Scheduled(fixedDelayString = "3000")
     public void poll() {
-        LOGGER.debug("Worker poll tick");
-        jobService.pickOneQueued().ifPresent(job -> {
-            LOGGER.debug("Worker picked job id={} type={} status={}", job.getId(), job.getType(), job.getStatus());
-            try {
-                switch (job.getType()) {
-                    case TRANSCRIBE -> { LOGGER.debug("handleTranscribe start id={}", job.getId()); handleTranscribe(job); }
+        List<Job> jobs = jobService.claimQueuedBatch(workerProperties.getPollBatchSize());
+        if (jobs.isEmpty()) {
+            LOGGER.debug("Worker poll tick – no jobs claimed");
+            return;
+        }
 
-                    case DETECT -> {
-                        LOGGER.debug("detectWorkflow.start id={}", job.getId());
-                        int count = detectWorkflow.run(job.getMedia().getId(), job.getPayload());
-                        jobService.markDone(job.getId(), Map.of("segmentCount", count));
-                    }
+        LOGGER.info("Worker claimed jobs count={} ids={}", jobs.size(), jobs.stream().map(Job::getId).collect(Collectors.toList()));
+        jobs.forEach(this::submitJob);
+    }
 
-                    case CLIP -> {
-                        var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
-                        try {
-                            clipService.setStatus(clipId, ClipStatus.RENDERING);
-                            LOGGER.debug("clipWorkFlow.start id={}", job.getId());
-                            clipWorkFlow.run(clipId); // aparte bean → @Transactional actief
-                            clipService.setStatus(clipId, ClipStatus.READY);
-                            jobService.markDone(job.getId(), Map.of("clipId", clipId.toString()));
-                        } catch (Exception e) {
-                            LOGGER.error("CLIP {} failed: {}", job.getId(), e.toString(), e);
-                            clipService.setStatus(clipId, ClipStatus.FAILED);
-                            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
-                        }
-                    }
+    private void submitJob(Job job) {
+        workerExecutor.execute(() -> runJobWithSemaphore(job));
+    }
 
-                    case EXPORT -> {
-                        LOGGER.debug("handle export start id={}", job.getId());
-                        renderService.handleExportJob(job);
-                    }
-
-                    case RENDER_CLEAN -> {
-                        LOGGER.debug("handle clean render start id={}", job.getId());
-                        handleCleanRender(job);
-                    }
-
-                    default -> LOGGER.warn("Unhandeld job type {}", job.getType());
-                }
-            } catch (Exception e) {
-                LOGGER.error("Job {}  Failed: {}", job.getId(), e.getMessage(), e);
-                jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+    private void runJobWithSemaphore(Job job) {
+        Semaphore semaphore = semaphoreFor(job.getType());
+        boolean acquired = false;
+        long t0 = System.nanoTime();
+        try {
+            if (semaphore != null) {
+                semaphore.acquire();
+                acquired = true;
             }
-        });
+            LOGGER.info("JOB START jobId={} type={} media={} project={}", job.getId(), job.getType(), mediaId(job), resolveProjectId(job));
+            boolean ok = runJob(job);
+            LOGGER.info("JOB {} jobId={} type={} media={} project={} in={}ms", ok ? "DONE" : "FAILED", job.getId(), job.getType(), mediaId(job), resolveProjectId(job), (System.nanoTime() - t0) / 1_000_000);
+        } catch (Exception e) {
+            LOGGER.error("Job {} failed: {}", job.getId(), e.toString(), e);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+        } finally {
+            if (acquired) {
+                semaphore.release();
+            }
+        }
+    }
+
+    private boolean runJob(Job job) {
+        try {
+            return switch (job.getType()) {
+                case TRANSCRIBE -> handleTranscribe(job);
+                case DETECT -> handleDetect(job);
+                case CLIP -> handleClipJob(job);
+                case EXPORT -> handleExport(job);
+                case RENDER_CLEAN -> handleCleanRender(job);
+                default -> {
+                    LOGGER.warn("Unhandled job type={} id={}", job.getType(), job.getId());
+                    yield false;
+                }
+            };
+        } catch (Exception e) {
+            LOGGER.error("Job {} failed: {}", job.getId(), e.toString(), e);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+            return false;
+        }
+    }
+
+    private Semaphore semaphoreFor(JobType type) {
+        return switch (type) {
+            case CLIP -> clipSemaphore;
+            case TRANSCRIBE -> transcribeSemaphore;
+            case DETECT -> detectSemaphore;
+            default -> null;
+        };
+    }
+
+    private UUID mediaId(Job job) {
+        return job.getMedia() != null ? job.getMedia().getId() : null;
+    }
+
+    private UUID resolveProjectId(Job job) {
+        if (job.getPayload() == null) {
+            return null;
+        }
+        Object value = job.getPayload().get("projectId");
+        if (value == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(String.valueOf(value));
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
 @Transactional
-    void handleTranscribe(Job job) {
+    boolean handleTranscribe(Job job) {
     LOGGER.debug("TRANSCRIBE enter jobId={} mediaId={}", job.getId(), job.getMedia()!=null?job.getMedia().getId():null); // 👈
     Objects.requireNonNull(job, "job");
     final UUID mediaId = job.getMedia() != null ? job.getMedia().getId() : null;
     if (mediaId == null) {
         jobService.markError(job.getId(), "MEDIA_MISSING", Map.of());
-        return;
+        return false;
     }
 
+    Media media = mediaRepo.findById(mediaId).orElseThrow();
+
+    // 0) Idempotent: als transcript al bestaat → overslaan en direct DETECT enqueuen
+    if (transcriptService.existsAnyFor(mediaId)) {
+        jobService.markDone(job.getId(), Map.of("skipped", "already_transcribed"));
+        jobService.enqueue(mediaId, DETECT, forwardedDetectPayload(job, null));
+        return true;
+    }
+
+    // 1) ObjectKey normaliseren (fallback voor oude records)
+    String key = media.getObjectKey();
+    if (key == null || key.isBlank()) {
+        throw new IllegalArgumentException("media.objectKey invalid: " + key);
+    }
+
+    Path rawPath = null;
+    boolean rawReady = false;
     try {
-        Media media = mediaRepo.findById(mediaId).orElseThrow();
-
-        // 0) Idempotent: als transcript al bestaat → overslaan en direct DETECT enqueuen
-        if (transcriptService.existsAnyFor(mediaId)) {
-            jobService.markDone(job.getId(), Map.of("skipped", "already_transcribed"));
-            jobService.enqueue(mediaId, DETECT, forwardedDetectPayload(job, null));
-            return;
-        }
-
-        // 1) ObjectKey normaliseren (fallback voor oude records)
-        String key = media.getObjectKey();
-        if (key == null || key.isBlank()) {
-            throw new IllegalArgumentException("media.objectKey invalid: " + key);
-        }
-
-
-
         // 2) Inputbestand garanderen in RAW
-        Path input;
         String src = media.getSource() == null ? "" : media.getSource().toLowerCase(Locale.ROOT);
         media.setStatus(MediaStatus.PROCESSING);
         mediaRepo.save(media);
 
         if ("url".equals(src)) {
-            // Download naar RAW als het er niet staat. Laat de downloader exact onder `key` plaatsen.
-            input = urlDownloader.ensureRawObject(
+            rawPath = urlDownloader.ensureRawObject(
                     Objects.requireNonNull(media.getExternalUrl(), "externalUrl is null for URL source"),
                     key
             );
-        }else {
-            // als het geen url is, verifieer dat raw bestand bestaat
-            java.nio.file.Path raw = storage.resolveRaw(key);
-            if (!java.nio.file.Files.exists(raw)) {
+        } else {
+            rawPath = storage.resolveRaw(key);
+            if (!Files.exists(rawPath)) {
                 throw new IllegalStateException("RAW missing for objectKey: " + key);
             }
         }
+        rawReady = rawPath != null && Files.exists(rawPath);
+        tryExtractThumbnail(media, preferredThumbnailSource(rawPath));
 
         long t0 = System.nanoTime();
 
@@ -218,9 +275,17 @@ public class WorkerService {
 
         LOGGER.info("TRANSCRIBE {} OK in {} ms (lang={}, provider={})",
                 mediaId, (System.nanoTime() - t0) / 1_000_000, res.lang(), res.provider());
+        return true;
 
     } catch (Exception ex) {
         LOGGER.error("TRANSCRIBE {} failed: {}", mediaId, ex.toString(), ex);
+        if (!rawReady) {
+            try {
+                ingestCleanupService.cleanupFailedIngest(mediaId, job.getId(), key, media.getExternalUrl(), ex);
+            } catch (Exception cleanupEx) {
+                LOGGER.warn("Cleanup after ingest failure failed mediaId={} err={}", mediaId, cleanupEx.toString());
+            }
+        }
         try {
             if (job.getMedia() != null) {
                 mediaRepo.findById(job.getMedia().getId()).ifPresent(m -> {
@@ -230,9 +295,57 @@ public class WorkerService {
             }
         } catch (Exception ignore) {}
         jobService.markError(job.getId(), ex.getMessage(), Map.of("stack", stackTop(ex)));
+        return false;
     }
 
 }
+
+    private boolean handleDetect(Job job) {
+        UUID mediaId = mediaId(job);
+        if (mediaId == null) {
+            jobService.markError(job.getId(), "MEDIA_MISSING", Map.of());
+            return false;
+        }
+        try {
+            LOGGER.debug("detectWorkflow.start id={}", job.getId());
+            int count = detectWorkflow.run(mediaId, job.getPayload());
+            jobService.markDone(job.getId(), Map.of("segmentCount", count));
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("DETECT {} failed: {}", job.getId(), e.toString(), e);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+            return false;
+        }
+    }
+
+    private boolean handleClipJob(Job job) {
+        var clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
+        try {
+            clipService.setStatus(clipId, ClipStatus.RENDERING);
+            LOGGER.debug("clipWorkFlow.start id={}", job.getId());
+            clipWorkFlow.run(clipId); // aparte bean → @Transactional actief
+            clipService.setStatus(clipId, ClipStatus.READY);
+            jobService.markDone(job.getId(), Map.of("clipId", clipId.toString()));
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("CLIP {} failed: {}", job.getId(), e.toString(), e);
+            clipService.setStatus(clipId, ClipStatus.FAILED);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+            return false;
+        }
+    }
+
+    private boolean handleExport(Job job) {
+        try {
+            LOGGER.debug("handle export start id={}", job.getId());
+            renderService.handleExportJob(job);
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("EXPORT {} failed: {}", job.getId(), e.toString(), e);
+            jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+            return false;
+        }
+    }
 
     private Map<String, Object> forwardedDetectPayload(Job job, TranscriptionEngine.Result res) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -248,6 +361,32 @@ public class WorkerService {
         }
         return payload.isEmpty() ? Map.of() : payload;
     }
+
+    private void tryExtractThumbnail(Media media, Path rawPath) {
+        if (media == null || rawPath == null) {
+            return;
+        }
+        try {
+            thumbnailService.extractFromLocalMedia(media, rawPath);
+        } catch (Exception ex) {
+            LOGGER.warn("Thumbnail extract skipped media={} err={}", media.getId(), ex.toString());
+        }
+    }
+
+    private Path preferredThumbnailSource(Path rawPath) {
+        if (rawPath == null) {
+            return null;
+        }
+        String name = rawPath.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".m4a")) {
+            Path mp4Sibling = rawPath.getParent().resolve("source.mp4");
+            if (Files.exists(mp4Sibling)) {
+                return mp4Sibling;
+            }
+        }
+        return rawPath;
+    }
+
     private String stackTop(Throwable ex) {
         var sw = new java.io.StringWriter();
         ex.printStackTrace(new java.io.PrintWriter(sw));
@@ -257,7 +396,7 @@ public class WorkerService {
     }
 
     @Transactional
-    void handleCleanRender(Job job) {
+    boolean handleCleanRender(Job job) {
         try {
             UUID clipId = UUID.fromString(String.valueOf(job.getPayload().get("clipId")));
             Clip clip = clipRepo.findById(clipId).orElseThrow();
@@ -277,9 +416,11 @@ public class WorkerService {
             clean.setRelatedMedia(media);
             assetRepo.save(clean);
             jobService.markDone(job.getId(), Map.of("clipId", clipId.toString(), "mp4Key", res.mp4Key()));
+            return true;
         } catch (Exception e) {
             LOGGER.error("Clean render failed id={} reason={}", job.getId(), e.toString(), e);
             jobService.markError(job.getId(), e.getMessage(), Map.of("stack", stackTop(e)));
+            return false;
         }
     }
 

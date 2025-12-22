@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,9 +21,9 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
         WHERE status = 'QUEUED'
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
-        LIMIT 1
+        LIMIT :limit
         """, nativeQuery = true)
-    Optional<UUID> selectOneQueuedIdForUpdate();
+    List<UUID> selectQueuedIdsForUpdate(@Param("limit") int limit);
 
     @Modifying
     @Transactional
@@ -35,6 +36,18 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
            AND status = 'QUEUED'
         """, nativeQuery = true)
     int markRunning(@Param("id") UUID id);
+
+    @Modifying
+    @Transactional
+    @Query(value = """
+        UPDATE job
+           SET status = 'RUNNING',
+               updated_at = now(),
+               attempts = COALESCE(attempts,0) + 1
+         WHERE id in (:ids)
+           AND status = 'QUEUED'
+        """, nativeQuery = true)
+    int markRunningBatch(@Param("ids") List<UUID> ids);
 
     @Modifying @Transactional
     @Query(value = """
@@ -55,6 +68,21 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
          WHERE id = :id
         """, nativeQuery = true)
     int markError(@Param("id") UUID id, @Param("errorJson") String errorJson);
+
+    @Modifying
+    @Transactional
+    @Query(value = """
+        UPDATE job
+           SET status = 'FAILED',
+               updated_at = now(),
+               result = CAST(:errorJson AS jsonb)
+         WHERE media_id = :mediaId
+           AND status in ('QUEUED','RUNNING')
+           AND (:excludeId IS NULL OR id <> :excludeId)
+        """, nativeQuery = true)
+    int failQueuedAndRunningByMedia(@Param("mediaId") UUID mediaId,
+                                    @Param("excludeId") UUID excludeId,
+                                    @Param("errorJson") String errorJson);
 
     // ---- Dedup (optioneel) ----
     @Query("""

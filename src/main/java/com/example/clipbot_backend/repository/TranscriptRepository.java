@@ -2,13 +2,14 @@ package com.example.clipbot_backend.repository;
 
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Transcript;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
-
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface TranscriptRepository extends JpaRepository<Transcript, UUID> {
     Optional<Transcript> findByMediaAndLangAndProvider(Media media, String lang, String provider);
@@ -24,6 +25,10 @@ public interface TranscriptRepository extends JpaRepository<Transcript, UUID> {
        order by t.createdAt desc
        """)
     Optional<Transcript> findTopByMediaIdOrderByCreatedAtDesc(@Param("mediaId") UUID mediaId);
+
+    @Modifying
+    @Transactional
+    void deleteByMedia(Media media);
 
 
 }

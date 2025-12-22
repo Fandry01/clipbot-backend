@@ -7,6 +7,6 @@ import org.springframework.context.annotation.Configuration;
  * Enables application-specific configuration properties.
  */
 @Configuration
-@EnableConfigurationProperties({BrandProperties.class, PlansProperties.class})
+@EnableConfigurationProperties({BrandProperties.class, PlansProperties.class, IngestCleanupProperties.class})
 public class AppPropertiesConfig {
 }

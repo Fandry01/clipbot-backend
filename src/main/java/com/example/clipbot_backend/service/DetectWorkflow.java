@@ -88,7 +88,7 @@ public class DetectWorkflow {
                     media.getId());
 
             Path srcPath = requireRaw(media);
-            thumbnailService.extractFromLocalMedia(media, srcPath);
+            safeExtractThumbnail(media, srcPath);
             DetectionParams params = buildParams(payload).withSpeakerTurnsEnabled(isMulti);
             LOGGER.debug("DETECT params speakerTurnsEnabled={} media={}", params.speakerTurnsEnabled(), media.getId());
             var detected = detection.detect(srcPath, tr, params);
@@ -264,6 +264,28 @@ public class DetectWorkflow {
         media.setStatus(MediaStatus.FAILED);
         mediaRepo.save(media);
         LOGGER.warn("Detect failed media={} err={}", mediaId, e.toString());
+    }
+
+    private void safeExtractThumbnail(Media media, Path rawPath) {
+        try {
+            thumbnailService.extractFromLocalMedia(media, preferredThumbnailSource(rawPath));
+        } catch (Exception ex) {
+            LOGGER.warn("Thumbnail extract skipped media={} err={}", media != null ? media.getId() : null, ex.toString());
+        }
+    }
+
+    private Path preferredThumbnailSource(Path rawPath) {
+        if (rawPath == null) {
+            return null;
+        }
+        String name = rawPath.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".m4a")) {
+            Path mp4Sibling = rawPath.getParent().resolve("source.mp4");
+            if (java.nio.file.Files.exists(mp4Sibling)) {
+                return mp4Sibling;
+            }
+        }
+        return rawPath;
     }
 
 

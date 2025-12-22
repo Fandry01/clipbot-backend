@@ -14,10 +14,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class JobService {
@@ -60,9 +57,34 @@ public class JobService {
     }
 
     @Transactional
-    public Optional<Job> pickOneQueued() {
-        return jobRepo.selectOneQueuedIdForUpdate()
-                .flatMap(id -> jobRepo.markRunning(id) == 1 ? jobRepo.findById(id) : Optional.empty());
+    public List<Job> claimQueuedBatch(int maxBatchSize) {
+        if (maxBatchSize <= 0) {
+            return List.of();
+        }
+
+        List<UUID> ids = jobRepo.selectQueuedIdsForUpdate(maxBatchSize);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+
+        int updated = jobRepo.markRunningBatch(ids);
+        if (updated <= 0) {
+            return List.of();
+        }
+
+        Map<UUID, Integer> order = new HashMap<>();
+        for (int i = 0; i < ids.size(); i++) {
+            order.put(ids.get(i), i);
+        }
+
+        List<Job> jobs = new ArrayList<>(jobRepo.findAllById(ids));
+        for (Job job : jobs) {
+            job.setStatus(com.example.clipbot_backend.util.JobStatus.RUNNING);
+            job.setAttempts(job.getAttempts() + 1);
+        }
+
+        jobs.sort(Comparator.comparingInt(j -> order.getOrDefault(j.getId(), Integer.MAX_VALUE)));
+        return jobs;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

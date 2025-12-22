@@ -1,6 +1,10 @@
 package com.example.clipbot_backend.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,8 +28,10 @@ import com.example.clipbot_backend.service.DetectWorkflow;
 import com.example.clipbot_backend.service.FasterWhisperClient;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
 import com.example.clipbot_backend.service.Interfaces.SubtitleService;
+import com.example.clipbot_backend.service.IngestCleanupService;
 import com.example.clipbot_backend.service.RenderService;
 import com.example.clipbot_backend.service.UrlDownloader;
+import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.SpeakerMode;
 import java.nio.file.Files;
@@ -36,6 +42,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -82,16 +89,21 @@ class WorkerServiceTranscriptionSelectionTest {
     private TranscriptionEngine gptEngine;
     @Mock
     private TranscriptionEngine fasterEngine;
+    @Mock
+    private ThumbnailService thumbnailService;
+    @Mock
+    private IngestCleanupService ingestCleanupService;
 
     private WorkerService workerService;
     private Path tempMedia;
 
     @BeforeEach
     void setup() throws Exception {
+        var workerProps = new com.example.clipbot_backend.config.WorkerExecutorProperties();
         workerService = new WorkerService(jobService, transcriptService, mediaRepository, transcriptRepository, segmentRepository,
                 clipRepository, assetRepository, urlDownloader, fastWhisperClient, audioWindowService, detectWorkflow,
-                clipWorkFlow, clipService, detectionEngine, clipRenderEngine, storageService, subtitleService, renderService,
-                gptEngine, fasterEngine);
+                clipWorkFlow, clipService, thumbnailService, ingestCleanupService, detectionEngine, clipRenderEngine, storageService, subtitleService, renderService,
+                gptEngine, fasterEngine, Runnable::run, workerProps);
         tempMedia = Files.createTempFile("media", ".mp4");
         Files.write(tempMedia, new byte[]{1, 2, 3});
     }
@@ -143,6 +155,49 @@ class WorkerServiceTranscriptionSelectionTest {
 
         verify(fasterEngine, times(1)).transcribe(any());
         verify(gptEngine, never()).transcribe(any());
+    }
+
+    @Test
+    void downloadFailureTriggersCleanup() {
+        Media media = buildMedia(SpeakerMode.SINGLE);
+        media.setSource("url");
+        media.setExternalUrl("https://www.youtube.com/watch?v=video");
+        Job job = buildJob(media);
+
+        when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
+        when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(urlDownloader.ensureRawObject(anyString(), anyString())).thenThrow(new IllegalStateException("auth wall"));
+
+        workerService.handleTranscribe(job);
+
+        verify(ingestCleanupService).cleanupFailedIngest(eq(media.getId()), eq(job.getId()), eq(media.getObjectKey()), eq(media.getExternalUrl()), any(Throwable.class));
+        verify(jobService).markError(eq(job.getId()), anyString(), anyMap());
+        verify(jobService, never()).markDone(eq(job.getId()), any());
+    }
+
+    @Test
+    void thumbnailUsesLocalVideoWhenAvailable() throws Exception {
+        Media media = buildMedia(SpeakerMode.SINGLE);
+        media.setObjectKey("ext/yt/video/source.m4a");
+        Job job = buildJob(media);
+
+        when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
+        when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+
+        Path dir = Files.createTempDirectory("thumb-src");
+        Path m4a = dir.resolve("source.m4a");
+        Path mp4 = dir.resolve("source.mp4");
+        Files.writeString(m4a, "audio");
+        Files.writeString(mp4, "video");
+        when(storageService.resolveRaw(media.getObjectKey())).thenReturn(m4a);
+        when(fasterEngine.transcribe(any())).thenReturn(new TranscriptionEngine.Result("text", java.util.List.of(), "en", "FW", Map.of()));
+        when(transcriptService.upsert(any(), any())).thenReturn(UUID.randomUUID());
+
+        workerService.handleTranscribe(job);
+
+        ArgumentCaptor<Path> pathCaptor = ArgumentCaptor.forClass(Path.class);
+        verify(thumbnailService).extractFromLocalMedia(eq(media), pathCaptor.capture());
+        assertEquals(mp4, pathCaptor.getValue());
     }
 
     private Media buildMedia(SpeakerMode mode) {
