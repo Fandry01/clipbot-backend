@@ -3,7 +3,6 @@ package com.example.clipbot_backend.service.thumbnail;
 import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Project;
-import com.example.clipbot_backend.model.ProjectMediaLink;
 import com.example.clipbot_backend.repository.AccountRepository;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
@@ -27,7 +26,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
@@ -91,13 +89,12 @@ class ThumbnailServiceExtractionTest {
 
         Project project = new Project(owner, "demo", null, null);
         project.setId(UUID.randomUUID());
-        ProjectMediaLink link = new ProjectMediaLink(project, media);
-
         when(mediaRepository.getReferenceById(mediaId)).thenReturn(media);
         when(accountRepository.getReferenceById(ownerId)).thenReturn(owner);
-        when(projectMediaRepository.findByMedia(any(Media.class))).thenReturn(List.of(link));
+        when(projectMediaRepository.findProjectIdsByMediaId(mediaId)).thenReturn(List.of(project.getId()));
 
-        thumbnailService.extractFromLocalMedia(media, rawPath);
+        ThumbnailService.ThumbnailRequest request = new ThumbnailService.ThumbnailRequest(mediaId, ownerId, List.of(project.getId()), 2000L);
+        thumbnailService.extractFromLocalMedia(request, rawPath);
 
         String expectedThumbKey = String.format("media/thumbs/%s.jpg", mediaId);
         assertThat(storageService.existsInOut(expectedThumbKey)).isTrue();

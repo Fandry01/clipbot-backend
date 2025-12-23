@@ -17,6 +17,7 @@ import com.example.clipbot_backend.model.Job;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
+import com.example.clipbot_backend.repository.ProjectMediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
@@ -47,6 +48,7 @@ class WorkerServiceConcurrencyTest {
     @Mock private SegmentRepository segmentRepository;
     @Mock private ClipRepository clipRepository;
     @Mock private AssetRepository assetRepository;
+    @Mock private ProjectMediaRepository projectMediaRepository;
     @Mock private UrlDownloader urlDownloader;
     @Mock private FasterWhisperClient fastWhisperClient;
     @Mock private AudioWindowService audioWindowService;
@@ -88,6 +90,7 @@ class WorkerServiceConcurrencyTest {
                 segmentRepository,
                 clipRepository,
                 assetRepository,
+                projectMediaRepository,
                 urlDownloader,
                 fastWhisperClient,
                 audioWindowService,

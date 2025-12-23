@@ -43,6 +43,7 @@ public class WorkerService {
     private final SegmentRepository segmentRepo;
     private final ClipRepository clipRepo;
     private final AssetRepository assetRepo;
+    private final ProjectMediaRepository projectMediaRepository;
     private final UrlDownloader urlDownloader;
     private final FasterWhisperClient fastWhisperClient;
     private final AudioWindowService audioWindowService;
@@ -67,7 +68,7 @@ public class WorkerService {
     private final SubtitleService subtitles;
     private final RenderService renderService;
 
-    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, ThumbnailService thumbnailService, IngestCleanupService ingestCleanupService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, RenderService renderService, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine, @Qualifier("workerTaskExecutor") Executor workerExecutor, WorkerExecutorProperties workerProperties) {
+    public WorkerService(JobService jobService, TranscriptService transcriptService, MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, ClipRepository clipRepo, AssetRepository assetRepo, ProjectMediaRepository projectMediaRepository, UrlDownloader urlDownloader, FasterWhisperClient fastWhisperClient, AudioWindowService audioWindowService, DetectWorkflow detectWorkflow, ClipWorkFlow clipWorkFlow, ClipService clipService, ThumbnailService thumbnailService, IngestCleanupService ingestCleanupService, DetectionEngine detection, ClipRenderEngine renderEngine, StorageService storage, SubtitleService subtitles, RenderService renderService, @Qualifier("gptDiarizeEngine")TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine")TranscriptionEngine fasterWhisperEngine, @Qualifier("workerTaskExecutor") Executor workerExecutor, WorkerExecutorProperties workerProperties) {
         this.jobService = jobService;
         this.transcriptService = transcriptService;
         this.mediaRepo = mediaRepo;
@@ -75,6 +76,7 @@ public class WorkerService {
         this.segmentRepo = segmentRepo;
         this.clipRepo = clipRepo;
         this.assetRepo = assetRepo;
+        this.projectMediaRepository = projectMediaRepository;
         this.urlDownloader = urlDownloader;
         this.fastWhisperClient = fastWhisperClient;
         this.audioWindowService = audioWindowService;
@@ -228,7 +230,9 @@ public class WorkerService {
             }
         }
         rawReady = rawPath != null && Files.exists(rawPath);
-        tryExtractThumbnail(media, preferredThumbnailSource(rawPath));
+        ThumbnailService.ThumbnailRequest thumbRequest = buildThumbnailRequest(media.getId());
+        Path preferred = preferredThumbnailSource(rawPath);
+        tryExtractThumbnail(thumbRequest, preferred);
 
         long t0 = System.nanoTime();
 
@@ -362,14 +366,14 @@ public class WorkerService {
         return payload.isEmpty() ? Map.of() : payload;
     }
 
-    private void tryExtractThumbnail(Media media, Path rawPath) {
-        if (media == null || rawPath == null) {
+    private void tryExtractThumbnail(ThumbnailService.ThumbnailRequest request, Path rawPath) {
+        if (request == null || rawPath == null) {
             return;
         }
         try {
-            thumbnailService.extractFromLocalMedia(media, rawPath);
+            thumbnailService.extractFromLocalMedia(request, rawPath);
         } catch (Exception ex) {
-            LOGGER.warn("Thumbnail extract skipped media={} err={}", media.getId(), ex.toString());
+            LOGGER.warn("Thumbnail extract skipped media={} err={}", request.mediaId(), ex.toString());
         }
     }
 
@@ -385,6 +389,16 @@ public class WorkerService {
             }
         }
         return rawPath;
+    }
+
+    @Transactional(readOnly = true)
+    ThumbnailService.ThumbnailRequest buildThumbnailRequest(UUID mediaId) {
+        Media media = mediaRepo.findByIdWithOwner(mediaId).orElseThrow();
+        List<UUID> projectIds = projectMediaRepository.findProjectIdsByMediaId(mediaId);
+        if (projectIds == null) {
+            projectIds = List.of();
+        }
+        return new ThumbnailService.ThumbnailRequest(media.getId(), media.getOwner().getId(), projectIds, media.getDurationMs());
     }
 
     private String stackTop(Throwable ex) {

@@ -4,7 +4,6 @@ import com.example.clipbot_backend.model.Account;
 import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.model.Project;
-import com.example.clipbot_backend.model.ProjectMediaLink;
 import com.example.clipbot_backend.repository.AccountRepository;
 import com.example.clipbot_backend.repository.AssetRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
@@ -104,31 +103,34 @@ public class ThumbnailService {
     /**
      * Extracts a thumbnail from the downloaded source and assigns it to related projects/media.
      * Runs only when the source file is present locally.
+     *
+     * @param request immutable set of identifiers required for persistence.
+     * @param localSource local file to extract from.
      */
-    public void extractFromLocalMedia(Media media, Path localSource) {
-        if (media == null || localSource == null) {
+    public void extractFromLocalMedia(ThumbnailRequest request, Path localSource) {
+        if (request == null || request.mediaId() == null || request.ownerId() == null || localSource == null) {
             return;
         }
         if (!Files.exists(localSource)) {
-            LOGGER.debug("Thumbnail extract skipped; file missing mediaId={} path={}", media.getId(), localSource);
+            LOGGER.debug("Thumbnail extract skipped; file missing mediaId={} path={}", request.mediaId(), localSource);
             return;
         }
         if (!looksLikeVideo(localSource)) {
-            LOGGER.debug("Thumbnail extract skipped; non-video source mediaId={} path={}", media.getId(), localSource);
+            LOGGER.debug("Thumbnail extract skipped; non-video source mediaId={} path={}", request.mediaId(), localSource);
             return;
         }
 
-        String thumbKey = buildThumbKey(media.getId());
+        String thumbKey = buildThumbKey(request.mediaId());
         if (storageService.existsInOut(thumbKey)) {
-            persistThumbnailReferences(media.getId(), media.getOwner().getId(), thumbKey, resolveSize(thumbKey));
+            persistThumbnailReferences(request.mediaId(), request.ownerId(), request.projectIds(), thumbKey, resolveSize(thumbKey));
             return;
         }
 
-        LOGGER.info("Thumbnail extract scheduled mediaId={} file={}", media.getId(), localSource);
+        LOGGER.info("Thumbnail extract scheduled mediaId={} file={} projects={}", request.mediaId(), localSource, request.projectIds());
         Path tempOutput = null;
         try {
             tempOutput = Files.createTempFile("thumb-", ".jpg");
-            double seekSec = computeSeekSeconds(media);
+            double seekSec = computeSeekSeconds(request.durationMs());
             List<String> cmd = List.of(
                     ffmpegBin, "-y",
                     "-ss", String.format(java.util.Locale.ROOT, "%.3f", seekSec),
@@ -137,20 +139,20 @@ public class ThumbnailService {
                     "-q:v", "2",
                     tempOutput.toAbsolutePath().toString()
             );
-            LOGGER.info("Thumbnail extract started mediaId={} seekSec={} cmd={} output={} ", media.getId(), seekSec, cmd, tempOutput);
+            LOGGER.info("Thumbnail extract started mediaId={} seekSec={} cmd={} output={} ", request.mediaId(), seekSec, cmd, tempOutput);
             new ProcessBuilder(cmd).redirectErrorStream(true).start().waitFor();
 
             if (!Files.exists(tempOutput) || Files.size(tempOutput) <= 0) {
-                LOGGER.warn("Thumbnail extract failed (empty output) mediaId={} file={}", media.getId(), localSource);
+                LOGGER.warn("Thumbnail extract failed (empty output) mediaId={} file={}", request.mediaId(), localSource);
                 return;
             }
 
             storageService.uploadToOut(tempOutput, thumbKey);
             long size = Files.size(tempOutput);
-            LOGGER.info("Thumbnail extract completed mediaId={} thumbKey={} size={}B", media.getId(), thumbKey, size);
-            persistThumbnailReferences(media.getId(), media.getOwner().getId(), thumbKey, size);
+            LOGGER.info("Thumbnail extract completed mediaId={} thumbKey={} size={}B", request.mediaId(), thumbKey, size);
+            persistThumbnailReferences(request.mediaId(), request.ownerId(), request.projectIds(), thumbKey, size);
         } catch (Exception ex) {
-            LOGGER.warn("Thumbnail extract failed mediaId={} path={} err={}", media.getId(), localSource, ex.toString());
+            LOGGER.warn("Thumbnail extract failed mediaId={} path={} err={}", request.mediaId(), localSource, ex.toString());
         } finally {
             if (tempOutput != null) {
                 try {
@@ -178,18 +180,18 @@ public class ThumbnailService {
         return String.format(DEFAULT_THUMB_PATTERN, mediaId);
     }
 
-    private double computeSeekSeconds(Media media) {
-        if (media.getDurationMs() == null || media.getDurationMs() <= 0) {
+    private double computeSeekSeconds(Long durationMs) {
+        if (durationMs == null || durationMs <= 0) {
             return DEFAULT_THUMB_SEC;
         }
-        double durSec = media.getDurationMs() / 1000.0;
+        double durSec = durationMs / 1000.0;
         double pct = durSec * PCT_THUMB_FRACTION;
         double clamped = Math.max(MIN_PCT_SEC, Math.min(pct, Math.max(MIN_THUMB_SEC, durSec - 1.0)));
         return Math.max(MIN_THUMB_SEC, clamped);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    protected void persistThumbnailReferences(UUID mediaId, UUID ownerId, String thumbKey, long size) {
+    protected void persistThumbnailReferences(UUID mediaId, UUID ownerId, List<UUID> projectIds, String thumbKey, long size) {
         Media mediaRef = mediaRepository.getReferenceById(mediaId);
         Account ownerRef = accountRepository.getReferenceById(ownerId);
 
@@ -197,10 +199,14 @@ public class ThumbnailService {
         asset.setRelatedMedia(mediaRef);
         assetRepository.save(asset);
 
-        List<ProjectMediaLink> links = projectMediaRepository.findByMedia(mediaRef);
-        List<Project> toSave = new ArrayList<>(links.size());
-        for (ProjectMediaLink link : links) {
-            Project project = link.getProject();
+        List<UUID> resolvedProjectIds = projectIds;
+        if (resolvedProjectIds == null || resolvedProjectIds.isEmpty()) {
+            List<UUID> fromRepo = projectMediaRepository.findProjectIdsByMediaId(mediaId);
+            resolvedProjectIds = fromRepo == null ? List.of() : fromRepo;
+        }
+        List<Project> toSave = new ArrayList<>(resolvedProjectIds.size());
+        for (UUID projectId : resolvedProjectIds) {
+            Project project = projectRepository.getReferenceById(projectId);
             if (project.getThumbnailUrl() == null || project.getThumbnailUrl().isBlank()) {
                 project.setThumbnailUrl(thumbKey);
                 toSave.add(project);
@@ -209,5 +215,11 @@ public class ThumbnailService {
         if (!toSave.isEmpty()) {
             projectRepository.saveAll(toSave);
         }
+        LOGGER.info("ThumbnailService persisted media={} owner={} projectsUpdated={}", mediaId, ownerId, resolvedProjectIds.size());
     }
+
+    /**
+     * Immutable DTO for thumbnail extraction without lazy entity dependencies.
+     */
+    public record ThumbnailRequest(UUID mediaId, UUID ownerId, List<UUID> projectIds, Long durationMs) { }
 }

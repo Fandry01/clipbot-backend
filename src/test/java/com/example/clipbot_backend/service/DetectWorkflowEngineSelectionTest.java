@@ -59,6 +59,8 @@ class DetectWorkflowEngineSelectionTest {
     private RecommendationService recommendationService;
     @Mock
     private com.example.clipbot_backend.service.thumbnail.ThumbnailService thumbnailService;
+    @Mock
+    private com.example.clipbot_backend.repository.ProjectMediaRepository projectMediaRepository;
 
     private DetectWorkflow detectWorkflow;
     private Path tempFile;
@@ -77,7 +79,8 @@ class DetectWorkflowEngineSelectionTest {
                 audioWindowService,
                 urlDownloader,
                 recommendationService,
-                thumbnailService
+                thumbnailService,
+                projectMediaRepository
         );
         tempFile = Files.createTempFile("dw", ".mp4");
         Files.write(tempFile, new byte[]{1, 2, 3});

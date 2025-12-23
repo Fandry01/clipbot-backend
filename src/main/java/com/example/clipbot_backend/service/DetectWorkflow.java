@@ -11,6 +11,7 @@ import com.example.clipbot_backend.model.Segment;
 import com.example.clipbot_backend.model.Transcript;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
+import com.example.clipbot_backend.repository.ProjectMediaRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
 import com.example.clipbot_backend.service.FasterWhisperClient;
 import com.example.clipbot_backend.service.Interfaces.StorageService;
@@ -49,10 +50,11 @@ public class DetectWorkflow {
     private final UrlDownloader urlDownloader;
     private final RecommendationService recommendationService;
     private final ThumbnailService thumbnailService;
+    private final ProjectMediaRepository projectMediaRepository;
 
     private static final int DEFAULT_TOP_N = 6;
 
-    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, FasterWhisperClient fastWhisperClient, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService) {
+    public DetectWorkflow(MediaRepository mediaRepo, TranscriptRepository transcriptRepo, SegmentRepository segmentRepo, StorageService storage, DetectionEngine detection, TranscriptService transcriptService, @Qualifier("gptDiarizeEngine") TranscriptionEngine gptDiarizeEngine, @Qualifier("fasterWhisperEngine") TranscriptionEngine fasterWhisperEngine, AudioWindowService audioWindowService, FasterWhisperClient fastWhisperClient, UrlDownloader urlDownloader, RecommendationService recommendationService, ThumbnailService thumbnailService, ProjectMediaRepository projectMediaRepository) {
         this.mediaRepo = mediaRepo;
         this.transcriptRepo = transcriptRepo;
         this.segmentRepo = segmentRepo;
@@ -66,6 +68,7 @@ public class DetectWorkflow {
         this.urlDownloader = urlDownloader;
         this.recommendationService = recommendationService;
         this.thumbnailService = thumbnailService;
+        this.projectMediaRepository = projectMediaRepository;
     }
 
     public int run(UUID mediaId, Map<String,Object> payload) throws Exception {
@@ -88,7 +91,7 @@ public class DetectWorkflow {
                     media.getId());
 
             Path srcPath = requireRaw(media);
-            safeExtractThumbnail(media, srcPath);
+            safeExtractThumbnail(media.getId(), srcPath);
             DetectionParams params = buildParams(payload).withSpeakerTurnsEnabled(isMulti);
             LOGGER.debug("DETECT params speakerTurnsEnabled={} media={}", params.speakerTurnsEnabled(), media.getId());
             var detected = detection.detect(srcPath, tr, params);
@@ -266,12 +269,24 @@ public class DetectWorkflow {
         LOGGER.warn("Detect failed media={} err={}", mediaId, e.toString());
     }
 
-    private void safeExtractThumbnail(Media media, Path rawPath) {
-        try {
-            thumbnailService.extractFromLocalMedia(media, preferredThumbnailSource(rawPath));
-        } catch (Exception ex) {
-            LOGGER.warn("Thumbnail extract skipped media={} err={}", media != null ? media.getId() : null, ex.toString());
+    private void safeExtractThumbnail(UUID mediaId, Path rawPath) {
+        if (mediaId == null || rawPath == null) {
+            return;
         }
+        try {
+            ThumbnailService.ThumbnailRequest request = loadThumbnailRequest(mediaId);
+            Path preferred = preferredThumbnailSource(rawPath);
+            thumbnailService.extractFromLocalMedia(request, preferred);
+        } catch (Exception ex) {
+            LOGGER.warn("Thumbnail extract skipped media={} err={}", mediaId, ex.toString());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    ThumbnailService.ThumbnailRequest loadThumbnailRequest(UUID mediaId) {
+        Media media = mediaRepo.findByIdWithOwner(mediaId).orElseThrow();
+        List<UUID> projectIds = projectMediaRepository.findProjectIdsByMediaId(mediaId);
+        return new ThumbnailService.ThumbnailRequest(media.getId(), media.getOwner().getId(), projectIds, media.getDurationMs());
     }
 
     private Path preferredThumbnailSource(Path rawPath) {

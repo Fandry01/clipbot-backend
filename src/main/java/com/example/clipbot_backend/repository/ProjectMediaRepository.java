@@ -63,4 +63,11 @@ public interface ProjectMediaRepository extends JpaRepository<ProjectMediaLink, 
         long getLinkCount();
     }
 
+    @Query("""
+           select pml.project.id
+           from ProjectMediaLink pml
+           where pml.media.id = :mediaId
+           """)
+    List<UUID> findProjectIdsByMediaId(@Param("mediaId") UUID mediaId);
+
 }

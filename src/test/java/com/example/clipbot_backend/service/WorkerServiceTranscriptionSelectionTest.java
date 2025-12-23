@@ -21,6 +21,7 @@ import com.example.clipbot_backend.repository.ClipRepository;
 import com.example.clipbot_backend.repository.MediaRepository;
 import com.example.clipbot_backend.repository.SegmentRepository;
 import com.example.clipbot_backend.repository.TranscriptRepository;
+import com.example.clipbot_backend.repository.ProjectMediaRepository;
 import com.example.clipbot_backend.service.AudioWindowService;
 import com.example.clipbot_backend.service.ClipService;
 import com.example.clipbot_backend.service.ClipWorkFlow;
@@ -64,6 +65,8 @@ class WorkerServiceTranscriptionSelectionTest {
     @Mock
     private AssetRepository assetRepository;
     @Mock
+    private ProjectMediaRepository projectMediaRepository;
+    @Mock
     private UrlDownloader urlDownloader;
     @Mock
     private FasterWhisperClient fastWhisperClient;
@@ -101,7 +104,7 @@ class WorkerServiceTranscriptionSelectionTest {
     void setup() throws Exception {
         var workerProps = new com.example.clipbot_backend.config.WorkerExecutorProperties();
         workerService = new WorkerService(jobService, transcriptService, mediaRepository, transcriptRepository, segmentRepository,
-                clipRepository, assetRepository, urlDownloader, fastWhisperClient, audioWindowService, detectWorkflow,
+                clipRepository, assetRepository, projectMediaRepository, urlDownloader, fastWhisperClient, audioWindowService, detectWorkflow,
                 clipWorkFlow, clipService, thumbnailService, ingestCleanupService, detectionEngine, clipRenderEngine, storageService, subtitleService, renderService,
                 gptEngine, fasterEngine, Runnable::run, workerProps);
         tempMedia = Files.createTempFile("media", ".mp4");
@@ -114,6 +117,7 @@ class WorkerServiceTranscriptionSelectionTest {
         Job job = buildJob(media);
         when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
         when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(mediaRepository.findByIdWithOwner(media.getId())).thenReturn(Optional.of(media));
         when(storageService.resolveRaw(media.getObjectKey())).thenReturn(tempMedia);
         when(gptEngine.transcribe(any())).thenReturn(new TranscriptionEngine.Result("text", java.util.List.of(), "en", "GPT_DIARIZE", Map.of()));
         when(transcriptService.upsert(any(), any())).thenReturn(UUID.randomUUID());
@@ -130,6 +134,7 @@ class WorkerServiceTranscriptionSelectionTest {
         Job job = buildJob(media);
         when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
         when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(mediaRepository.findByIdWithOwner(media.getId())).thenReturn(Optional.of(media));
         when(storageService.resolveRaw(media.getObjectKey())).thenReturn(tempMedia);
         when(gptEngine.transcribe(any())).thenThrow(new RuntimeException("gpt failed"));
         when(fasterEngine.transcribe(any())).thenReturn(new TranscriptionEngine.Result("text", java.util.List.of(), "en", "FW", Map.of()));
@@ -147,6 +152,7 @@ class WorkerServiceTranscriptionSelectionTest {
         Job job = buildJob(media);
         when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
         when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(mediaRepository.findByIdWithOwner(media.getId())).thenReturn(Optional.of(media));
         when(storageService.resolveRaw(media.getObjectKey())).thenReturn(tempMedia);
         when(fasterEngine.transcribe(any())).thenReturn(new TranscriptionEngine.Result("text", java.util.List.of(), "en", "FW", Map.of()));
         when(transcriptService.upsert(any(), any())).thenReturn(UUID.randomUUID());
@@ -166,6 +172,7 @@ class WorkerServiceTranscriptionSelectionTest {
 
         when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
         when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(mediaRepository.findByIdWithOwner(media.getId())).thenReturn(Optional.of(media));
         when(urlDownloader.ensureRawObject(anyString(), anyString())).thenThrow(new IllegalStateException("auth wall"));
 
         workerService.handleTranscribe(job);
@@ -183,6 +190,7 @@ class WorkerServiceTranscriptionSelectionTest {
 
         when(transcriptService.existsAnyFor(media.getId())).thenReturn(false);
         when(mediaRepository.findById(media.getId())).thenReturn(Optional.of(media));
+        when(mediaRepository.findByIdWithOwner(media.getId())).thenReturn(Optional.of(media));
 
         Path dir = Files.createTempDirectory("thumb-src");
         Path m4a = dir.resolve("source.m4a");
@@ -196,8 +204,10 @@ class WorkerServiceTranscriptionSelectionTest {
         workerService.handleTranscribe(job);
 
         ArgumentCaptor<Path> pathCaptor = ArgumentCaptor.forClass(Path.class);
-        verify(thumbnailService).extractFromLocalMedia(eq(media), pathCaptor.capture());
+        ArgumentCaptor<ThumbnailService.ThumbnailRequest> reqCaptor = ArgumentCaptor.forClass(ThumbnailService.ThumbnailRequest.class);
+        verify(thumbnailService).extractFromLocalMedia(reqCaptor.capture(), pathCaptor.capture());
         assertEquals(mp4, pathCaptor.getValue());
+        assertEquals(media.getId(), reqCaptor.getValue().mediaId());
     }
 
     private Media buildMedia(SpeakerMode mode) {
