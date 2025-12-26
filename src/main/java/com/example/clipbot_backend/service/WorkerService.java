@@ -15,7 +15,7 @@ import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
 import com.example.clipbot_backend.util.JobType;
 import com.example.clipbot_backend.util.MediaStatus;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
