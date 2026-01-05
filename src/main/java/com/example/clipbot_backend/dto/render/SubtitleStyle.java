@@ -13,15 +13,42 @@ public record SubtitleStyle(
         @Min(0) @Max(8) Integer outline,
         @Min(0) @Max(12) Integer shadow,
         @Pattern(regexp = "left|center|right") String alignment,
-        @Min(0) @Max(200) Integer marginL,
-        @Min(0) @Max(200) Integer marginR,
-        @Min(0) @Max(200) Integer marginV,
-        @Min(0) @Max(3) Integer wrapStyle
+        @Min(0) @Max(400) Integer marginL,
+        @Min(0) @Max(400) Integer marginR,
+        @Min(0) @Max(400) Integer marginV,
+        @Min(0) @Max(3) Integer wrapStyle,
+
+        // ✅ NEW
+        Boolean backgroundBar,
+        String backgroundColor
 ) {
     public static SubtitleStyle defaults() {
         return new SubtitleStyle(
-                "Inter Semi Bold", 17, "#FFFFFF", "rgba(0,0,0,0.5)",
-                1, 0, "center", 154, 154, 40, 2
+                // kies iets dat je render container echt heeft (Roboto of Montserrat)
+                "Roboto",
+                42,                       // 9:16 base (scaled later for 1080h)
+                "#FFFFFF",
+                "#000000",
+                2,
+                0,
+                "center",
+                60,
+                60,
+                90,
+                2,
+
+                false,
+                "rgba(0,0,0,0.55)"
         );
+    }
+
+    public boolean bgEnabled() {
+        return backgroundBar != null && backgroundBar;
+    }
+
+    public String bgColorOrDefault() {
+        return (backgroundColor == null || backgroundColor.isBlank())
+                ? "rgba(0,0,0,0.55)"
+                : backgroundColor;
     }
 }

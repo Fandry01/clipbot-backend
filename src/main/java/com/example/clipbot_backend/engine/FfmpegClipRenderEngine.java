@@ -55,6 +55,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         String name = file.getFileName().toString().toLowerCase();
         return name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".mp3") || name.endsWith(".wav");
     }
+    @Deprecated
     private String subtitleStyleForHeight(int videoH, int videoW,@Nullable Map<String,Object> meta) {
         // Dynamisch per aspect ratio
         double ar = (videoW > 0) ? (videoW * 1.0 / Math.max(1, videoH)) : 16.0/9.0;
@@ -148,20 +149,16 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             if (watermarkExists) { cmd.add("-i"); cmd.add(watermarkFile.toAbsolutePath().toString()); }
 
             // 1) scale/pad naar target
-            if (width != null && height != null) {
-                vf = appendFilter(vf, "scale=" + width + ":" + height + ":force_original_aspect_ratio=decrease");
-                vf = appendFilter(vf, "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2");
-            }
+                vf = appendFilter(vf, "scale=" + W + ":" + H + ":force_original_aspect_ratio=decrease");
+                vf = appendFilter(vf, "pad=" + W + ":" + H + ":(ow-iw)/2:(oh-ih)/2");
+
 
             // 2) subtitles (na scale/pad, zodat FontSize klopt op outputresolutie)
             if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
                 if (srtPath != null && Files.exists(srtPath)) {
-                    String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
-                    String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
-                    if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
-                    vf = appendFilter(vf, subFilter);
+                    SubtitleStyle styleObj = null; // v1 defaults; later override uit meta/brandtemplate
+                    vf = appendFilter(vf, buildSubtitlesFilter(srtPath, styleObj, H));
                 } else {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
                 }
@@ -186,7 +183,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             cmd.add("-c:v"); cmd.add("libx264");
             cmd.add("-preset"); cmd.add(targetPreset);
             cmd.add("-crf"); cmd.add(String.valueOf(targetCrf));
-            if (fps != null) { cmd.add("-r"); cmd.add(String.valueOf(FPS)); } // optioneel
+            if (fps > 0) { cmd.add("-r"); cmd.add(String.valueOf(FPS)); } // optioneel
             cmd.add("-c:a"); cmd.add("aac");
             cmd.add("-b:a"); cmd.add("128k");
 
@@ -207,11 +204,8 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
                 if (srtPath != null && Files.exists(srtPath)) {
-                    String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
-                    String style  = subtitleStyleForHeight(H,W,meta).replace("'", "\\'");
-                    String subFilter = "subtitles='" + srtEsc + "':force_style='" + style + "'";
-                    if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
-                    vf = appendFilter(vf, subFilter);
+                    SubtitleStyle styleObj = null; // v1 defaults
+                    vf = appendFilter(vf, buildSubtitlesFilter(srtPath, styleObj, H));
                 } else {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
                 }
@@ -358,17 +352,15 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         long durMs = endMs - startMs;
         double durSec = durMs / 1000.0;
 
-        String forceStyle = AssStyleUtil.buildForceStyle(style);
-        String subFilter = String.format(
-                "subtitles='%s':force_style='%s'",
-                escapeForFilter(subtitleFile.toAbsolutePath().toString()),
-                forceStyle.replace("'", "\\'")
-        );
+        //String forceStyle = AssStyleUtil.buildForceStyle(style, height);
+
+        String subFilter = buildSubtitlesFilter(subtitleFile, style, height);
         if (fontsDir != null) {
             subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
         }
         String vf = "scale=" + width + ":" + height + ":force_original_aspect_ratio=decrease," +
-                "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2," + subFilter;
+                "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2," +
+                subFilter;
 
         String outName = "export-" + UUID.randomUUID() + ".mp4";
         Path tmpOut = workDir.resolve(outName);
@@ -403,7 +395,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             throw new RuntimeException("ffmpeg styled render failed with exit " + p.exitValue() + "\n" + outBuf);
         }
 
-        String mp4Key = "clips/export-" + outName;
+        String mp4Key = "clips/" + outName;
         storageService.uploadToOut(tmpOut, mp4Key);
         long mp4Size = Files.size(tmpOut);
         try {
@@ -501,6 +493,14 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             try { return Double.parseDouble(txt); } catch (NumberFormatException ignore) {}
         }
         return null;
+    }
+
+    private String buildSubtitlesFilter(Path srtPath, @Nullable SubtitleStyle style, int outH) {
+        String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
+        String force = AssStyleUtil.buildForceStyle(style, outH).replace("'", "\\'");
+        String subFilter = "subtitles='" + srtEsc + "':force_style='" + force + "'";
+        //if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
+        return subFilter;
     }
 
     }

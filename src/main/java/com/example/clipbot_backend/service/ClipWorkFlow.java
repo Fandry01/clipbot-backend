@@ -3,6 +3,7 @@ package com.example.clipbot_backend.service;
 import com.example.clipbot_backend.dto.RenderOptions;
 import com.example.clipbot_backend.dto.RenderResult;
 import com.example.clipbot_backend.dto.SubtitleFiles;
+import com.example.clipbot_backend.engine.FfmpegClipRenderEngine;
 import com.example.clipbot_backend.engine.Interfaces.ClipRenderEngine;
 import com.example.clipbot_backend.model.*;
 
@@ -13,6 +14,8 @@ import com.example.clipbot_backend.service.thumbnail.ThumbnailService;
 import com.example.clipbot_backend.util.AssetKind;
 import com.example.clipbot_backend.util.ClipStatus;
 import jakarta.annotation.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +43,7 @@ public class ClipWorkFlow {
     private final ProjectMediaRepository projectMediaRepository;
     private final ThumbnailService thumbnailService;
     private TransactionTemplate txReqNew;
+    private static final Logger LOGGER = LoggerFactory.getLogger(ClipWorkFlow.class);
 
     public ClipWorkFlow(ClipRepository clipRepo,
                         TranscriptRepository transcriptRepo,
