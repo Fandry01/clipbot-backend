@@ -157,7 +157,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
                 if (srtPath != null && Files.exists(srtPath)) {
-                    SubtitleStyle styleObj = null; // v1 defaults; later override uit meta/brandtemplate
+                    SubtitleStyle styleObj = resolveSubtitleStyle(meta); // v1 defaults; later override uit meta/brandtemplate
                     vf = appendFilter(vf, buildSubtitlesFilter(srtPath, styleObj, H));
                 } else {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
@@ -183,7 +183,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             cmd.add("-c:v"); cmd.add("libx264");
             cmd.add("-preset"); cmd.add(targetPreset);
             cmd.add("-crf"); cmd.add(String.valueOf(targetCrf));
-            if (fps > 0) { cmd.add("-r"); cmd.add(String.valueOf(FPS)); } // optioneel
+            if (fps != null) { cmd.add("-r"); cmd.add(String.valueOf(FPS)); } // optioneel
             cmd.add("-c:a"); cmd.add("aac");
             cmd.add("-b:a"); cmd.add("128k");
 
@@ -204,7 +204,7 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
             if (subs != null && notBlank(subs.srtKey())) {
                 Path srtPath = resolveFirstExisting(subs.srtKey());
                 if (srtPath != null && Files.exists(srtPath)) {
-                    SubtitleStyle styleObj = null; // v1 defaults
+                    SubtitleStyle styleObj = resolveSubtitleStyle(meta); // v1 defaults
                     vf = appendFilter(vf, buildSubtitlesFilter(srtPath, styleObj, H));
                 } else {
                     LOGGER.warn("SRT not found for burn-in (skipping): {}", subs.srtKey());
@@ -355,9 +355,6 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         //String forceStyle = AssStyleUtil.buildForceStyle(style, height);
 
         String subFilter = buildSubtitlesFilter(subtitleFile, style, height);
-        if (fontsDir != null) {
-            subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
-        }
         String vf = "scale=" + width + ":" + height + ":force_original_aspect_ratio=decrease," +
                 "pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2," +
                 subFilter;
@@ -499,8 +496,64 @@ public class FfmpegClipRenderEngine  implements ClipRenderEngine {
         String srtEsc = escapeForFilter(srtPath.toAbsolutePath().toString());
         String force = AssStyleUtil.buildForceStyle(style, outH).replace("'", "\\'");
         String subFilter = "subtitles='" + srtEsc + "':force_style='" + force + "'";
-        //if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
+        if (fontsDir != null) subFilter += ":fontsdir='" + escapeForFilter(fontsDir.toString()) + "'";
         return subFilter;
     }
 
+    @SuppressWarnings("unchecked")
+    private static SubtitleStyle resolveSubtitleStyle(@Nullable Map<String, Object> meta) {
+        if (meta == null) return null;
+
+        Object raw = meta.get("subtitleStyle");
+        if (!(raw instanceof Map<?, ?> mm)) return null;
+
+        Map<String, Object> m = (Map<String, Object>) mm;
+
+        SubtitleStyle d = SubtitleStyle.defaults();
+
+        String fontFamily = asStr(m, "fontFamily");
+        Integer fontSize = asInt(m, "fontSize");
+        String primaryColor = asStr(m, "primaryColor");
+        String outlineColor = asStr(m, "outlineColor");
+        Integer outline = asInt(m, "outline");
+        Integer shadow = asInt(m, "shadow");
+        String alignment = asStr(m, "alignment");
+        Integer marginL = asInt(m, "marginL");
+        Integer marginR = asInt(m, "marginR");
+        Integer marginV = asInt(m, "marginV");
+        Integer wrapStyle = asInt(m, "wrapStyle");
+
+        Boolean backgroundBar = null;
+        Object bgRaw = m.get("backgroundBar");
+        if (bgRaw instanceof Boolean b) backgroundBar = b;
+        else if (bgRaw != null) backgroundBar = Boolean.parseBoolean(bgRaw.toString());
+
+        String backgroundColor = asStr(m, "backgroundColor");
+
+        boolean nothing =
+                fontFamily == null && fontSize == null && primaryColor == null && outlineColor == null &&
+                        outline == null && shadow == null && alignment == null &&
+                        marginL == null && marginR == null && marginV == null && wrapStyle == null &&
+                        backgroundBar == null && backgroundColor == null;
+
+        if (nothing) return null;
+
+        return new SubtitleStyle(
+                fontFamily != null ? fontFamily : d.fontFamily(),
+                fontSize != null ? fontSize : d.fontSize(),
+                primaryColor != null ? primaryColor : d.primaryColor(),
+                outlineColor != null ? outlineColor : d.outlineColor(),
+                outline != null ? outline : d.outline(),
+                shadow != null ? shadow : d.shadow(),
+                alignment != null ? alignment : d.alignment(),
+                marginL != null ? marginL : d.marginL(),
+                marginR != null ? marginR : d.marginR(),
+                marginV != null ? marginV : d.marginV(),
+                wrapStyle != null ? wrapStyle : d.wrapStyle(),
+                backgroundBar != null ? backgroundBar : d.backgroundBar(),
+                backgroundColor != null ? backgroundColor : d.backgroundColor()
+        );
     }
+
+
+}

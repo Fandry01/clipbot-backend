@@ -169,7 +169,9 @@ public class ClipWorkFlow {
                 ? subtitles.buildSubtitles(tr, io.startMs(), io.endMs())
                 : null;
 
-        RenderOptions options = RenderOptions.withDefaults(Map.of(), subs);
+        Map<String,Object> meta = new java.util.LinkedHashMap<>(io.meta() == null ? Map.of() : io.meta());
+
+        RenderOptions options = RenderOptions.withDefaults(meta, subs);
         RenderResult res = renderEngine.render(srcPath, io.startMs(), io.endMs(), options);
         RenderResult clean = null;
         try {
@@ -218,14 +220,17 @@ public class ClipWorkFlow {
             }
         }
     }
-    private record IoData(UUID clipId, UUID mediaId, UUID ownerId, String objectKey, long startMs, long endMs) {}
+    private record IoData(UUID clipId, UUID mediaId, UUID ownerId,
+                          String objectKey, long startMs, long endMs, Map<String,Object> meta) {}
 
     @Transactional(readOnly = true)
     protected IoData loadIoData(UUID clipId) {
         var clip = clipRepo.findByIdWithMedia(clipId)
                 .orElseThrow(() -> new IllegalStateException("CLIP_NOT_FOUND"));
-        var m = clip.getMedia(); // is gefetched, dus geen lazy-issue
-        return new IoData(clip.getId(), m.getId(),m.getOwner().getId(), m.getObjectKey(), clip.getStartMs(), clip.getEndMs());
+        var m = clip.getMedia();// is gefetched, dus geen lazy-issue
+        Map<String, Object> meta = clip.getMeta() == null ? Map.of() : clip.getMeta();
+        return new IoData(clip.getId(), m.getId(),m.getOwner().getId(),
+                m.getObjectKey(), clip.getStartMs(), clip.getEndMs(), meta);
     }
 
 }

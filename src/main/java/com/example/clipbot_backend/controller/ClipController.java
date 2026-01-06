@@ -1,10 +1,10 @@
 package com.example.clipbot_backend.controller;
 
 import com.example.clipbot_backend.dto.ClipResponse;
+import com.example.clipbot_backend.dto.render.PatchClipRequest;
 import com.example.clipbot_backend.dto.web.ClipCustomRequest;
 import com.example.clipbot_backend.dto.web.ClipFromSegmentRequest;
 import com.example.clipbot_backend.dto.web.EnqueueRenderRequest;
-import com.example.clipbot_backend.model.Asset;
 import com.example.clipbot_backend.model.Clip;
 import com.example.clipbot_backend.model.Media;
 import com.example.clipbot_backend.repository.AssetRepository;
@@ -13,7 +13,7 @@ import com.example.clipbot_backend.service.AccountService;
 import com.example.clipbot_backend.service.ClipService;
 import com.example.clipbot_backend.service.JobService;
 import com.example.clipbot_backend.util.ClipStatus;
-import com.example.clipbot_backend.util.JobType;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -35,14 +36,16 @@ public class ClipController {
     private final JobService jobService;
     private final AssetRepository assetRepo;
     private final MediaRepository mediaRepo;
+    private final ObjectMapper objectMapper;
 
 
-    public ClipController(AccountService accountService, ClipService clipService, JobService jobService, AssetRepository assetRepo, MediaRepository mediaRepo) {
+    public ClipController(AccountService accountService, ClipService clipService, JobService jobService, AssetRepository assetRepo, MediaRepository mediaRepo, ObjectMapper objectMapper) {
         this.accountService = accountService;
         this.clipService = clipService;
         this.jobService = jobService;
         this.assetRepo = assetRepo;
         this.mediaRepo = mediaRepo;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/from-segment")
@@ -96,18 +99,37 @@ public class ClipController {
     @PatchMapping("/{id}")
     public ClipResponse patch(@PathVariable UUID id,
                               @RequestParam String ownerExternalSubject,
-                              @RequestBody Map<String,Object> body) {
+                              @RequestBody PatchClipRequest body) {
         var clip = clipService.get(id);
         ensureOwnedBy(clip, ownerExternalSubject);
-        String title = (String) body.get("title");
-        Map<String,Object> meta = (Map<String,Object>) body.get("meta");
-        ClipStatus status = null;
-        if (body.get("status") != null) status = ClipStatus.valueOf(String.valueOf(body.get("status")));
 
-        if (title != null && title.length() > 255) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TITLE_TOO_LONG");
-        clip.setTitle(title != null ? title : clip.getTitle());
-        if (meta != null) clip.setMeta(meta);
-        if (status != null) clip.setStatus(status);
+        if(body.title() != null){
+            if(body.title().length() > 255) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TITLE_TOO_LONG");
+            clip.setTitle(body.title());
+        }
+
+        // trim
+        if(body.startMs() != null || body.endMs() != null){
+            long start = body.startMs() != null ? body.startMs() : clip.getStartMs();
+            long end = body.endMs()     != null ? body.endMs()   : clip.getEndMs();
+            if( start < 0 || end <= start) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_BOUNDS");
+            clip.setStartMs(start);
+            clip.setEndMs(end);
+        }
+
+        // meta merge
+        Map<String, Object> merged = new LinkedHashMap<>(clip.getMeta() == null ? Map.of() :clip.getMeta());
+        if (body.meta() != null) merged.putAll(body.meta());
+
+        // subtitleStyle -> altijd onder meta.subtitleStyle
+        if(body.subtitleStyle() != null){
+            //opslaan als Map zodat je meta JSON clean Blijft
+            Map<String,Object> styleMap = objectMapper.convertValue(body.subtitleStyle(),  new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            merged.put("subtitleStyle", styleMap);
+        }
+        clip.setMeta(merged);
+
+        //if (status != null) clip.setStatus(status);
         clipService.save(clip); // voeg simpele save toe of hergebruik bestaande method
         return ClipResponse.from(clip, assetRepo);
     }
